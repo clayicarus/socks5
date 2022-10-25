@@ -15,3 +15,7 @@ socks5 \<listen port\>
   
 # TODO
 - Realize UDP_ASSOCIATE.
+
+# FIXME
+- non-blocking getHostByName() in Hostname.cpp
+
