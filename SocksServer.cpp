@@ -100,7 +100,7 @@ void SocksServer::onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net
                                         string raw = time.toFormattedString(false).substr(0, 11);
                                         Md5Encode encode;
                                         string rps = encode.Encode(raw);
-                                        LOG_INFO << raw << " " << rps;
+//                                        LOG_INFO << raw << " " << rps;
                                         if(uname == "root" && passwd == rps) {
                                             char res[] = { '\x01', '\x00' };    // success
                                             conn->send(res, 2);
