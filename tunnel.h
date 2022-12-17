@@ -99,19 +99,6 @@ private:
     {
         LOG_DEBUG << conn->name() << " " << buf->readableBytes();
         if(serverConn_) {
-#ifndef NOT_OUTPUT
-            muduo::string req_str; // FIXME: O(buf->readableBytes())
-            std::for_each(buf->toStringPiece().begin(), buf->toStringPiece().end(), [&req_str](const auto &i){
-                if(i >= ' ' && i < 127) {
-                    req_str.push_back(i);
-                } else {
-                    char format_num[5]; // 0 x 0 0 \0
-                    snprintf(format_num, sizeof format_num, "0x%02x", i);
-                    req_str.append(muduo::string("\\") + format_num);
-                }
-            });
-            fprintf(stderr, "%s : %s - Response\n* begin *\n%s\n* end *\n", time.toFormattedString().c_str(), conn->name().c_str(), req_str.c_str());
-#endif  // NOT_OUTPUT
             LOG_DEBUG << conn->name() << " - Response to source";
             serverConn_->send(buf); // send response from destination to source
         } else {    // source died
