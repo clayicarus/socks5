@@ -6,6 +6,7 @@
 #include <muduo/base/Logging.h>
 #include <muduo/net/InetAddress.h>
 #include "Hostname.h"
+#include "MD5Encode.h"
 #include <set>
 using namespace muduo;
 using namespace muduo::net;
@@ -16,20 +17,6 @@ void SocksServer::onConnection(const muduo::net::TcpConnectionPtr &conn)
              << (conn->connected() ? "UP" : "DOWN");
     if(conn->connected()) {
         conn->setTcpNoDelay(true);
-        if(!isInList(conn->peerAddress().toIp(), "access_list")) {
-            LOG_INFO << conn->name() << " - onConnection New user " << conn->peerAddress().toIp();
-            FILE *fp = fopen("access_list", "ab");
-            if(fp) {
-                string s(conn->peerAddress().toIp());
-                s.push_back('\n');
-                fwrite(s.c_str(), s.size(), 1, fp);
-                fclose(fp);
-            }
-        }
-        if(!isInList(conn->peerAddress().toIp(), "white_list")) {
-            LOG_INFO << conn->name() << " - onConnection Not in white list " << conn->peerAddress().toIp();
-            conn->forceClose();
-        }
         auto it = status_.find(conn->name());
         if(it == status_.end()) {
             status_[conn->name()] = WREQ;
@@ -47,7 +34,7 @@ void SocksServer::onConnection(const muduo::net::TcpConnectionPtr &conn)
     }
 }
 
-void SocksServer::onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp)
+void SocksServer::onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time)
 {
     auto it = status_.find(conn->name());
     if(it == status_.end()) {
@@ -74,16 +61,18 @@ void SocksServer::onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net
                             methods.insert(mthd[i]);
                         }
                         buf->retrieve(headLen + len);   // read and retrieve !!
-                        if(methods.find('\x00') != methods.end()) {
-                            char response[] = "V\x00";
+                        if(methods.find('\x02') != methods.end()) {
+                            char response[] = "V\x02";
                             response[0] = ver;
                             conn->send(response, 2);
-                            it->second = WCMD;  // no need to validate, but how?
+                            conn->setContext(boost::any('\x02'));
+                            it->second = WVLDT;  // no need to validate, but how?
                         } else {
                             char response[] = "V\xff";
                             response[0] = ver;
                             conn->send(response, 2);
                             conn->shutdown();
+                            buf->retrieveAll();
                             status_.erase(it);
                         }
                     }
@@ -99,7 +88,33 @@ void SocksServer::onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net
                     switch(method) {
                         case '\x02':    // PASSWORD
                         {
-
+                            if(buf->readableBytes() > 2) {
+                                const char ver = buf->peek()[0];
+                                const char ulen = buf->peek()[1];
+                                if(buf->readableBytes() > 2 + ulen) {
+                                    string uname(buf->peek() + 2, buf->peek() + 2 + ulen);
+                                    const char plen = buf->peek()[2 + ulen];
+                                    if(buf->readableBytes() >= 2 + ulen + 1 + plen) {
+                                        string passwd(buf->peek() + 2 + ulen + 1, buf->peek() + 2 + ulen + 1 + plen);
+                                        buf->retrieve(1 + 1 + ulen + 1 + plen);
+                                        string raw = time.toFormattedString(false).substr(0, 11);
+                                        Md5Encode encode;
+                                        string rps = encode.Encode(raw);
+                                        LOG_INFO << raw << " " << rps;
+                                        if(uname == "root" && passwd == rps) {
+                                            char res[] = { '\x01', '\x00' };    // success
+                                            conn->send(res, 2);
+                                            it->second = WCMD;
+                                        } else {
+                                            char res[] = { '\x01', '\x01' };    // failed
+                                            conn->send(res, 2);
+                                            conn->shutdown();
+                                            buf->retrieveAll();
+                                            status_.erase(it);
+                                        }
+                                    }
+                                }
+                            }
                         }
                         break;
                     }
@@ -226,34 +241,5 @@ void SocksServer::onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net
             }
             break;
         }
-    }
-}
-
-bool SocksServer::isInList(const string &ip, const string &file) {
-    FILE * fp;
-    fp = fopen(file.c_str(), "rb");
-    if(fp == nullptr) {
-        fp = fopen(file.c_str(), "wb");
-        fclose(fp);
-        return false;
-    } else {
-        std::shared_ptr<FILE> f_sp(fp, ::fclose);   // remember to set fclose() or memory leak
-        char buf[64 * 1024];
-        string ip_list;
-        size_t n;
-        while((n = fread(buf, 1, sizeof buf, f_sp.get())) > 0) {
-            ip_list.append(buf, buf + n);
-        }
-        auto i1 = ip_list.begin();
-        auto i2 = std::find(ip_list.begin(), ip_list.end(), '\n');
-        while(i2 != ip_list.end()) {
-            if(string(i1, i2) == ip)
-                return true;
-            i1 = ++i2;
-            i2 = std::find(i2, ip_list.end(), '\n');
-        }
-        if(string(i1, i2) == ip)
-            return true;
-        return false;
     }
 }

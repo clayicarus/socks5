@@ -24,8 +24,6 @@ public:
     void onConnection(const muduo::net::TcpConnectionPtr &conn);
     void onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp);
 private:
-    static bool isInList(const std::string &ip, const std::string& file);
-
     enum Status {
         WREQ, WVLDT, WCMD, ESTABL
     };
