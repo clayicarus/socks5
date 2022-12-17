@@ -46,7 +46,9 @@ void SocksServer::onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net
         switch(status) {
             case WREQ:
                 handleWREQ(conn, buf, time);
-            break;
+                if(buf->readableBytes() == 0) {
+                    break;
+                }
             case WVLDT:
                 handleWVLDT(conn, buf, time);
             break;
@@ -79,11 +81,9 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
             }
             buf->retrieve(headLen + len);   // read and retrieve !!
             if(methods.find('\x02') != methods.end()) {
-                LOG_INFO << "password validate";
                 char response[] = "V\x02";
                 response[0] = ver;
                 conn->send(response, 2);
-                LOG_INFO << "send res";
                 conn->setContext(boost::any('\x02'));
                 it->second = WVLDT;
             } else {
@@ -120,8 +120,8 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
                             string raw = time.toFormattedString(false).substr(0, 11);
                             Md5Encode encode;
                             string rps = encode.Encode(raw);
-                            LOG_INFO << uname << " " << passwd;
-                            LOG_INFO << raw << " " << rps;
+                            LOG_INFO << "received password: " << passwd;
+                            LOG_INFO << "valid password: " << rps;
                             if(uname == "root" && passwd == rps) {
                                 char res[] = { '\x01', '\x00' };    // success
                                 conn->send(res, 2);
