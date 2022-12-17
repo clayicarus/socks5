@@ -13,6 +13,10 @@ socks5 \<listen port\>
   
   Realize a simple connection white list.
   
+- 20221217
+  
+  Realize password validate
+  
 # TODO
 - Realize UDP_ASSOCIATE.
 
