@@ -199,11 +199,15 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                                 const std::string hostname(buf->peek() + 5, buf->peek() + 5 + len);
                                 const void *port = buf->peek() + 5 + len;
                                 Hostname host(hostname);
-                                host.getHostByName();   // FIXME: non-blocking
+                                if(!host.getHostByName()) {  // FIXME: non-blocking
+                                    LOG_ERROR << conn->name() << " - domain_name parse failed";
+                                    buf->retrieveAll();
+                                    return;
+                                }
                                 sockaddr_in sock_addr;
                                 memZero(&sock_addr, sizeof(sock_addr));
                                 sock_addr.sin_family = AF_INET;
-                                sock_addr.sin_addr = host.address()[0];
+                                sock_addr.sin_addr = host.address().front();
                                 sock_addr.sin_port = *static_cast<const uint16_t *>(port);
                                 buf->retrieve(5 + len + 2);
                                 // setup tunnel to destination

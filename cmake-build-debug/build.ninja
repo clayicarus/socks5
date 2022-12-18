@@ -79,6 +79,12 @@ build CMakeFiles/socks5.dir/EncodeServer.cpp.o: CXX_COMPILER__socks5_Debug /home
   OBJECT_DIR = CMakeFiles/socks5.dir
   OBJECT_FILE_DIR = CMakeFiles/socks5.dir
 
+build CMakeFiles/socks5.dir/SocksResponse.cpp.o: CXX_COMPILER__socks5_Debug /home/clay/Git/socks5/SocksResponse.cpp || cmake_object_order_depends_target_socks5
+  DEP_FILE = CMakeFiles/socks5.dir/SocksResponse.cpp.o.d
+  FLAGS = -g -fdiagnostics-color=always -std=gnu++14
+  OBJECT_DIR = CMakeFiles/socks5.dir
+  OBJECT_FILE_DIR = CMakeFiles/socks5.dir
+
 
 # =============================================================================
 # Link build statements for EXECUTABLE target socks5
@@ -87,7 +93,7 @@ build CMakeFiles/socks5.dir/EncodeServer.cpp.o: CXX_COMPILER__socks5_Debug /home
 #############################################
 # Link the executable socks5
 
-build socks5: CXX_EXECUTABLE_LINKER__socks5_Debug CMakeFiles/socks5.dir/main.cpp.o CMakeFiles/socks5.dir/SocksServer.cpp.o CMakeFiles/socks5.dir/Hostname.cpp.o CMakeFiles/socks5.dir/MD5Encode.cpp.o CMakeFiles/socks5.dir/EncodeServer.cpp.o
+build socks5: CXX_EXECUTABLE_LINKER__socks5_Debug CMakeFiles/socks5.dir/main.cpp.o CMakeFiles/socks5.dir/SocksServer.cpp.o CMakeFiles/socks5.dir/Hostname.cpp.o CMakeFiles/socks5.dir/MD5Encode.cpp.o CMakeFiles/socks5.dir/EncodeServer.cpp.o CMakeFiles/socks5.dir/SocksResponse.cpp.o
   FLAGS = -g
   LINK_FLAGS = -static
   LINK_LIBRARIES = -lmuduo_net  -lmuduo_base  -lpthread

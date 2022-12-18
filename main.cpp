@@ -5,6 +5,8 @@
 #include "SocksServer.h"
 #include <muduo/net/EventLoop.h>
 #include "EncodeServer.h"
+#include "Hostname.h"
+
 using namespace muduo::net;
 using namespace muduo;
 
