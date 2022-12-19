@@ -17,6 +17,11 @@ socks5 \<listen port\>
   
   Realize password validate
   
+- 20221219
+
+  - debug about segment fault
+  - use SocksResponse
+  - follow RFC1928
 # TODO
 - Realize UDP_ASSOCIATE.
 
