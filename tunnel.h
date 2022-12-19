@@ -30,7 +30,7 @@ public:
     }
     ~Tunnel()
     {
-        LOG_INFO << "~Tunnel";
+        LOG_DEBUG << "~Tunnel";
     }
 
     void setup()

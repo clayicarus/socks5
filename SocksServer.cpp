@@ -7,6 +7,7 @@
 #include <muduo/net/InetAddress.h>
 #include "Hostname.h"
 #include "MD5Encode.h"
+#include "SocksResponse.h"
 #include <set>
 using namespace muduo;
 using namespace muduo::net;
@@ -72,7 +73,6 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
         const char len = buf->peek()[1];
         if(ver != '\x05') {
             conn->forceClose();
-            status_.erase(it);  // is here ok?
         } else if(buf->readableBytes() >= headLen + len) {
             const char *mthd = buf->peek() + 2;
             std::set<uint8_t> methods;
@@ -92,7 +92,6 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
                 conn->send(response, 2);
                 conn->shutdown();
                 buf->retrieveAll();
-                status_.erase(it);
             }
         }
     }
@@ -117,7 +116,7 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
                         if(buf->readableBytes() >= 2 + ulen + 1 + plen) {
                             string passwd(buf->peek() + 2 + ulen + 1, buf->peek() + 2 + ulen + 1 + plen);
                             buf->retrieve(1 + 1 + ulen + 1 + plen);
-                            string raw = time.toFormattedString(false).substr(0, 11);
+                            string raw = time.toFormattedString(false).substr(0, 10);
                             Md5Encode encode;
                             string rps = encode.Encode(raw);
                             LOG_INFO << "received password: " << passwd;
@@ -131,7 +130,6 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
                                 conn->send(res, 2);
                                 conn->shutdown();
                                 buf->retrieveAll();
-                                status_.erase(it);
                             }
                         }
                     }
@@ -151,9 +149,9 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
         const char atyp = buf->peek()[3];
         if(ver != '\x05') {
             // teardown
+            LOG_INFO << conn->name() << " - not valid VER";
             buf->retrieveAll();
-            status_.erase(conn->name());
-            conn->forceClose();
+            conn->shutdown();
         } else {
             switch (cmd) {
                 case '\x01':    // CMD: CONNECT
@@ -162,7 +160,6 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                         case '\x01':    // ATYP: ipv4
                         {
                             if(buf->readableBytes() >= 4 + 4 + 2) { //FIXME
-                                LOG_INFO << conn->name() << " - onMessage CONNECT by ipv4";
                                 const void *ip = buf->peek() + 4;
                                 const void *port = buf->peek() + 4 + 4;
                                 // use buf and retrieve buf
@@ -174,66 +171,62 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                                 buf->retrieve(4 + 4 + 2);
                                 // setup tunnel to destination
                                 InetAddress dst_addr(sock_addr);
+                                LOG_INFO << conn->name() << " - onMessage CONNECT to " << dst_addr.toIpPort();
                                 TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, dst_addr, conn);
                                 tunnel->setup();
                                 tunnel->connect();
                                 tunnels[conn->name()] = tunnel; // is necessary?
                                 status_[conn->name()] = ESTABL;
                                 // send response
-                                char response[10]{'\x05', '\x00', '\x00', '\xff',
-                                                  '\xff','\xff', '\xff', '\xff',
-                                                  '\xff', '\xff'};
-                                memcpy(response + 4, &sock_addr.sin_addr, 4);
-                                memcpy(response + 8, &sock_addr.sin_port, 2);
-                                response[3] = atyp;
-                                conn->send(response, sizeof(response));
+                                SocksResponse response;
+                                response.initSuccessResponse(sock_addr.sin_addr, sock_addr.sin_port);
+                                conn->send(response.responseData(), response.responseSize());
                             }
                         }
                             break;
                         case '\x03':    // ATYP: domain_name
                         {
-                            LOG_INFO << conn->name() << " - onMessage CONNECT by domain_name";
-                            // > 4
-                            const char len = buf->peek()[4];
-                            if(buf->readableBytes() >= 5 + len + 2) {
-                                const std::string hostname(buf->peek() + 5, buf->peek() + 5 + len);
-                                const void *port = buf->peek() + 5 + len;
-                                Hostname host(hostname);
-                                if(!host.getHostByName()) {  // FIXME: non-blocking
-                                    LOG_ERROR << conn->name() << " - domain_name parse failed";
-                                    buf->retrieveAll();
-                                    return;
+                            if(buf->readableBytes() > 4) {
+                                const char len = buf->peek()[4];
+                                if(buf->readableBytes() >= 5 + len + 2) {
+                                    const std::string hostname(buf->peek() + 5, buf->peek() + 5 + len);
+                                    const void *pport = buf->peek() + 5 + len;
+                                    uint16_t port = *static_cast<const uint16_t *>(pport);
+                                    Hostname host(hostname);
+                                    LOG_INFO << conn->name() << " - onMessage CONNECT to " << hostname << ":" << ntohs(port);
+                                    if(!host.getHostByName()) {  // FIXME: non-blocking
+                                        LOG_ERROR << conn->name() << " - " << hostname << " parse failed";
+                                        SocksResponse response;
+                                        response.initFailedResponse(hostname, port);
+                                        conn->send(response.responseData(), response.responseSize());
+                                        conn->shutdown();
+                                        return;
+                                    }
+                                    sockaddr_in sock_addr;
+                                    memZero(&sock_addr, sizeof(sock_addr));
+                                    sock_addr.sin_family = AF_INET;
+                                    sock_addr.sin_addr = host.address().front();
+                                    sock_addr.sin_port = port;
+                                    buf->retrieve(5 + len + 2);
+                                    // setup tunnel to destination
+                                    InetAddress dst_addr(sock_addr);
+                                    TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, dst_addr, conn);
+                                    tunnel->setup();
+                                    tunnel->connect();
+                                    tunnels[conn->name()] = tunnel; // is necessary?
+                                    status_[conn->name()] = ESTABL;
+                                    // send response
+                                    SocksResponse response;
+                                    response.initSuccessResponse(hostname, sock_addr.sin_port);
+                                    conn->send(response.responseData(), response.responseSize());
                                 }
-                                sockaddr_in sock_addr;
-                                memZero(&sock_addr, sizeof(sock_addr));
-                                sock_addr.sin_family = AF_INET;
-                                sock_addr.sin_addr = host.address().front();
-                                sock_addr.sin_port = *static_cast<const uint16_t *>(port);
-                                buf->retrieve(5 + len + 2);
-                                // setup tunnel to destination
-                                InetAddress dst_addr(sock_addr);
-                                TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, dst_addr, conn);
-                                tunnel->setup();
-                                tunnel->connect();
-                                tunnels[conn->name()] = tunnel; // is necessary?
-                                status_[conn->name()] = ESTABL;
-                                // send response
-                                char response[5 + len + 2];
-                                response[0] = ver;
-                                response[1] = '\x00';
-                                response[2] = '\x00';
-                                response[3] = atyp;
-                                response[4] = len;
-                                memcpy(response + 5, hostname.c_str(), len);
-                                memcpy(response + 5 + len, port, 2);
-                                conn->send(response, sizeof(response));
                             }
                         }
                             break;
                         case '\x04':    // ATYP: ipv6
                         {
                             LOG_INFO << conn->name() << " - onMessage CONNECT by ipv6";
-                            buf->retrieveAll();
+                            conn->shutdown();
                         }
                     }
                 }
@@ -241,15 +234,20 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                 case '\x02':    // CMD: BIND
                 {
                     LOG_INFO << conn->name() << " - onMessage CMD-BIND";
-                    buf->retrieveAll();
+                    conn->shutdown();
                 }
                     break;
                 case '\x03':    //CMD: UDP_ASSOCIATE
                 {
                     LOG_INFO << conn->name() << " - onMessage CMD-UDP_ASSOCIATE";
-                    buf->retrieveAll();
+                    conn->shutdown();
                 }
                     break;
+                default:
+                {
+                    LOG_INFO << conn->name() << " - unknown CMD";
+                    conn->shutdown();
+                }
             }
         }
     }
