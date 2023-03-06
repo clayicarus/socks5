@@ -1,3 +1,0 @@
-/home/clay/Git/socks5/cmake-build-debug/CMakeFiles/socks5.dir
-/home/clay/Git/socks5/cmake-build-debug/CMakeFiles/edit_cache.dir
-/home/clay/Git/socks5/cmake-build-debug/CMakeFiles/rebuild_cache.dir
