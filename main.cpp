@@ -12,6 +12,7 @@ using namespace muduo;
 
 int main(int argc, char *argv[])
 {
+    LOG_INFO << "main pid " << getpid();
     std::string ip;
     uint16_t port;
     if(argc > 2) {
