@@ -52,10 +52,14 @@ void SocksServer::onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net
                 }
             case WVLDT:
                 handleWVLDT(conn, buf, time);
-            break;
+                if(buf->readableBytes() == 0) {
+                    break;
+                }
             case WCMD:
                 handleWCMD(conn, buf, time);
-            break;
+                if(buf->readableBytes() == 0) {
+                    break;
+                }
             case ESTABL:
                 handleESTABL(conn, buf, time);
             break;
@@ -75,12 +79,12 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
             conn->forceClose();
         } else if(buf->readableBytes() >= headLen + len) {
             const char *mthd = buf->peek() + 2;
-            std::set<uint8_t> methods;
+            std::set<uint8_t> clientMethods;
             for(int i = 0; i < len; ++i) {
-                methods.insert(mthd[i]);
+                clientMethods.insert(mthd[i]);
             }
             buf->retrieve(headLen + len);   // read and retrieve !!
-            if(methods.find('\x02') != methods.end()) {
+            if(clientMethods.find('\x02') != clientMethods.end()) {
                 char response[] = "V\x02";
                 response[0] = ver;
                 conn->send(response, 2);
@@ -149,7 +153,7 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
         const char atyp = buf->peek()[3];
         if(ver != '\x05') {
             // teardown
-            LOG_INFO << conn->name() << " - not valid VER";
+            LOG_INFO << conn->name() << " - onMessage invalid VER";
             buf->retrieveAll();
             conn->shutdown();
         } else {
@@ -228,6 +232,11 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                             LOG_INFO << conn->name() << " - onMessage CONNECT by ipv6";
                             conn->shutdown();
                         }
+                        default:
+                        {
+                            LOG_INFO << conn->name() << " - onMessage invalid CMD";
+                            conn->shutdown();
+                        }
                     }
                 }
                     break;
@@ -245,7 +254,7 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                     break;
                 default:
                 {
-                    LOG_INFO << conn->name() << " - unknown CMD";
+                    LOG_INFO << conn->name() << " - onMessage unknown CMD";
                     conn->shutdown();
                 }
             }
