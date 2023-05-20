@@ -23,10 +23,10 @@ void SocksServer::onConnection(const muduo::net::TcpConnectionPtr &conn)
             status_[conn->name()] = WREQ;
         }
     } else {
-        auto it = tunnels.find(conn->name());
-        if(it != tunnels.end()) {
+        auto it = tunnels_.find(conn->name());
+        if(it != tunnels_.end()) {
             it->second->disconnect();
-            tunnels.erase(it);
+            tunnels_.erase(it);
         }
         auto is = status_.find(conn->name());
         if(is != status_.end()) {
@@ -88,7 +88,7 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
                 char response[] = "V\x02";
                 response[0] = ver;
                 conn->send(response, 2);
-                conn->setContext(boost::any('\x02'));
+                // conn->setContext(boost::any('\x02'));
                 it->second = WVLDT;
             } else {
                 char response[] = "V\xff";
@@ -105,41 +105,45 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
 {
     LOG_INFO << conn->name() << " - onMessage status WVLDT";
     auto it = status_.find(conn->name());
-    if(!conn->getContext().empty()) {
-        const char method = boost::any_cast<char>(conn->getContext());
-        conn->setContext(boost::any());
-        switch(method) {
-            case '\x02':    // PASSWORD
-            {
-                if(buf->readableBytes() > 2) {
-                    const char ver = buf->peek()[0];
-                    const char ulen = buf->peek()[1];
-                    if(buf->readableBytes() > 2 + ulen) {
-                        string uname(buf->peek() + 2, buf->peek() + 2 + ulen);
-                        const char plen = buf->peek()[2 + ulen];
-                        if(buf->readableBytes() >= 2 + ulen + 1 + plen) {
-                            string passwd(buf->peek() + 2 + ulen + 1, buf->peek() + 2 + ulen + 1 + plen);
-                            buf->retrieve(1 + 1 + ulen + 1 + plen);
-                            string raw = time.toFormattedString(false).substr(0, 10);
-                            Md5Encode encode;
-                            string rps = encode.Encode(raw);
-                            LOG_INFO << "received password: " << passwd;
-                            LOG_INFO << "valid password: " << rps;
-                            if(uname == "root" && passwd == rps) {
-                                char res[] = { '\x01', '\x00' };    // success
-                                conn->send(res, 2);
-                                it->second = WCMD;
-                            } else {
-                                char res[] = { '\x01', '\x01' };    // failed
-                                conn->send(res, 2);
-                                conn->shutdown();
-                                buf->retrieveAll();
-                            }
-                        }
-                    }
-                }
+    switch(validate_mode_) {
+        case DYNAMIC_PSWD:    // PASSWORD
+        {
+            if(buf->readableBytes() < 2) {
+                return;
             }
-                break;
+            const char ver = buf->peek()[0];
+            const char ulen = buf->peek()[1];
+            if(buf->readableBytes() < 2 + ulen) {
+                return;
+            }
+            string uname(buf->peek() + 2, buf->peek() + 2 + ulen);
+            const char plen = buf->peek()[2 + ulen];
+            if(buf->readableBytes() < 2 + ulen + 1 + plen) {
+                return;
+            }
+            string passwd(buf->peek() + 2 + ulen + 1, buf->peek() + 2 + ulen + 1 + plen);
+            buf->retrieve(1 + 1 + ulen + 1 + plen);
+            string raw = time.toFormattedString(false).substr(0, 10);
+            Md5Encode encode;
+            string rps = encode.Encode(raw);
+            LOG_INFO << "received password: " << passwd;
+            LOG_INFO << "valid password: " << rps;
+            if(uname == "root" && passwd == rps) {
+                char res[] = { '\x01', '\x00' };    // success
+                conn->send(res, 2);
+                it->second = WCMD;
+            } else {
+                char res[] = { '\x01', '\x01' };    // failed
+                conn->send(res, 2);
+                conn->shutdown();
+            }
+        } 
+        break;
+        default:
+        {
+            LOG_ERROR << " - onMessage invald valiation mode";
+            conn->shutdown();
+            return;
         }
     }
 }
@@ -179,7 +183,7 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                                 TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, dst_addr, conn);
                                 tunnel->setup();
                                 tunnel->connect();
-                                tunnels[conn->name()] = tunnel; // is necessary?
+                                tunnels_[conn->name()] = tunnel; // is necessary?
                                 status_[conn->name()] = ESTABL;
                                 // send response
                                 SocksResponse response;
@@ -217,7 +221,7 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                                     TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, dst_addr, conn);
                                     tunnel->setup();
                                     tunnel->connect();
-                                    tunnels[conn->name()] = tunnel; // is necessary?
+                                    tunnels_[conn->name()] = tunnel; // is necessary?
                                     status_[conn->name()] = ESTABL;
                                     // send response
                                     SocksResponse response;
