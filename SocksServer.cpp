@@ -248,7 +248,7 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                         buf->retrieve(5 + len + 2);
                         // setup tunnel to destination
                         InetAddress dst_addr(sock_addr);
-                        LOG_INFO << " - onMessage - " << hostname << " parsed as " << dst_addr.toIpPort();
+                        LOG_INFO << conn->name() << " - onMessage - " << hostname << " parsed as " << dst_addr.toIpPort();
                         TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, dst_addr, conn);
                         tunnel->setup();
                         tunnel->connect();
