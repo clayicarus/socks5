@@ -303,7 +303,7 @@ void SocksServer::handleESTABL(const TcpConnectionPtr &conn, muduo::net::Buffer 
     if(!conn->getContext().empty()) {
         const auto &destinationConn = boost::any_cast<const TcpConnectionPtr &>(conn->getContext());
         destinationConn->send(buf);
-    } else if(failed_counts_[conn->name()]++) {
+    } else if(failed_counts_[conn->name()]++ > 2) {
         LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - failed to connect to destination";
         conn->shutdown();
     }
