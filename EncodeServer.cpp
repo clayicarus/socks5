@@ -4,7 +4,7 @@
 
 #include <muduo/base/Logging.h>
 #include "EncodeServer.h"
-#include "MD5Encode.h"
+#include "base/MD5Encode.h"
 
 std::string EncodeServer::keyGen(const std::string &raw) 
 {

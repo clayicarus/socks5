@@ -8,12 +8,11 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 link_directories(${CMAKE_CURRENT_SOURCE_DIR}/lib)
 
 set(SOURCE_FILE
-        tunnel.h
-        SocksServer.cpp SocksServer.h
-        Hostname.h Hostname.cpp
-        MD5Encode.cpp MD5Encode.h
-        EncodeServer.cpp EncodeServer.h
-        SocksResponse.cpp SocksResponse.h)
+        SocksServer.cpp
+        base/Hostname.cpp
+        base/MD5Encode.cpp
+        EncodeServer.cpp
+        base/SocksResponse.cpp)
 set(LINK_LIST
         muduo_net muduo_base pthread)
 

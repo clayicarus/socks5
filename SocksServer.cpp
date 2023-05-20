@@ -7,8 +7,8 @@
 #include <muduo/base/Logging.h>
 #include <muduo/net/InetAddress.h>
 #include "EncodeServer.h"
-#include "Hostname.h"
-#include "SocksResponse.h"
+#include "base/Hostname.h"
+#include "base/SocksResponse.h"
 #include <set>
 #include <string>
 using namespace muduo;
