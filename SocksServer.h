@@ -5,7 +5,9 @@
 #ifndef SOCKS5_SOCKSSERVER_H
 #define SOCKS5_SOCKSSERVER_H
 
+#include <map>
 #include <muduo/net/TcpServer.h>
+#include <string>
 #include "tunnel.h"
 
 class SocksServer : muduo::noncopyable {
@@ -34,6 +36,7 @@ private:
     muduo::net::EventLoop *loop_;
     std::map<std::string, TunnelPtr> tunnels_;
     std::map<std::string, Status> status_;
+    std::map<std::string, int> failed_counts_;
     ValidationMode validate_mode_;
 
     void handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);

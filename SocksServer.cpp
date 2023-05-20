@@ -16,7 +16,7 @@ using namespace muduo::net;
 
 void SocksServer::onConnection(const muduo::net::TcpConnectionPtr &conn)
 {
-    LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() << " " << conn->peerAddress().toIpPort()
+    LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() 
              << (conn->connected() ? " UP" : " DOWN");
     if(conn->connected()) {
         conn->setTcpNoDelay(true);
@@ -33,6 +33,10 @@ void SocksServer::onConnection(const muduo::net::TcpConnectionPtr &conn)
         auto is = status_.find(conn->name());
         if(is != status_.end()) {
             status_.erase(is);
+        }
+        auto ic = failed_counts_.find(conn->name());
+        if(ic != failed_counts_.end()) {
+            failed_counts_.erase(ic);
         }
     }
 }
@@ -212,10 +216,10 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                     TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, dst_addr, conn);
                     tunnel->setup();
                     tunnel->connect();
-                    tunnels_[conn->name()] = tunnel; // is necessary?
+                    tunnels_[conn->name()] = tunnel; // is necessary
+                    SocksResponse response;
                     status_[conn->name()] = ESTABL;
                     // send response
-                    SocksResponse response;
                     response.initSuccessResponse(sock_addr.sin_addr, sock_addr.sin_port);
                     conn->send(response.responseData(), response.responseSize());
                 }
@@ -254,10 +258,10 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                     TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, dst_addr, conn);
                     tunnel->setup();
                     tunnel->connect();
-                    tunnels_[conn->name()] = tunnel; // is necessary?
+                    tunnels_[conn->name()] = tunnel; // is necessary
+                    SocksResponse response;
                     status_[conn->name()] = ESTABL;
                     // send response
-                    SocksResponse response;
                     response.initSuccessResponse(hostname, sock_addr.sin_port);
                     conn->send(response.responseData(), response.responseSize());
                 }
@@ -299,5 +303,8 @@ void SocksServer::handleESTABL(const TcpConnectionPtr &conn, muduo::net::Buffer 
     if(!conn->getContext().empty()) {
         const auto &destinationConn = boost::any_cast<const TcpConnectionPtr &>(conn->getContext());
         destinationConn->send(buf);
+    } else if(failed_counts_[conn->name()]++) {
+        LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - failed to connect to destination";
+        conn->shutdown();
     }
 }

@@ -38,7 +38,6 @@ public:
         using std::placeholders::_1;
         using std::placeholders::_2;
         using std::placeholders::_3;
-
         client_.setConnectionCallback(std::bind(&Tunnel::onClientConnection/* destination connection */,
                                                 shared_from_this(), _1));
         client_.setMessageCallback(std::bind(&Tunnel::onClientMessage,
@@ -56,11 +55,16 @@ public:
     void disconnect()
     {
         // how about not connected yet when source close actively?
-        if(!clientConn_) {
+        if(!connected()) {
             LOG_WARN << "Tunnel not connected yet";
             teardown();
         }
         client_.disconnect();
+    }
+
+    bool connected() const 
+    {
+        return clientConn_ && clientConn_->connected();
     }
 
 private:
