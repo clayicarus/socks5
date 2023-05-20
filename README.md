@@ -28,6 +28,8 @@ socks5 \<listen port\>
   - response correctly for source close actively
   - multiple validation mode
   - precise log info
+  - fix bug about socks response
+  - give up retry in several times 
 # TODO
 - Realize UDP_ASSOCIATE.
 
