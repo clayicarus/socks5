@@ -55,6 +55,11 @@ public:
 
     void disconnect()
     {
+        // how about not connected yet when source close actively?
+        if(!clientConn_) {
+            LOG_WARN << "Tunnel not connected yet";
+            teardown();
+        }
         client_.disconnect();
     }
 
@@ -170,8 +175,8 @@ private:
     }
 
     muduo::net::TcpClient client_;
-    muduo::net::TcpConnectionPtr  serverConn_;
-    muduo::net::TcpConnectionPtr clientConn_;
+    muduo::net::TcpConnectionPtr  serverConn_;  // source
+    muduo::net::TcpConnectionPtr clientConn_;   // destination
 };
 typedef std::shared_ptr<Tunnel> TunnelPtr;
 

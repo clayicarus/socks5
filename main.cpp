@@ -6,12 +6,15 @@
 #include <muduo/net/EventLoop.h>
 #include "EncodeServer.h"
 #include "Hostname.h"
+#include "muduo/base/LogStream.h"
+#include "muduo/base/Logging.h"
 
 using namespace muduo::net;
 using namespace muduo;
 
 int main(int argc, char *argv[])
 {
+    // Logger::setLogLevel(Logger::DEBUG);
     LOG_INFO << "main pid " << getpid();
     std::string ip;
     uint16_t port;
