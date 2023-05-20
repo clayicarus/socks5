@@ -23,6 +23,7 @@ public:
     void start() { server_.start(); }
     void onConnection(const muduo::net::TcpConnectionPtr &conn);
     void onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp);
+    static std::string keyGen(const std::string &raw);
 private:
     muduo::net::TcpServer server_;
     muduo::net::EventLoop *loop_;

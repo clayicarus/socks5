@@ -5,10 +5,11 @@
 #include "SocksServer.h"
 #include <muduo/base/Logging.h>
 #include <muduo/net/InetAddress.h>
+#include "EncodeServer.h"
 #include "Hostname.h"
-#include "MD5Encode.h"
 #include "SocksResponse.h"
 #include <set>
+#include <string>
 using namespace muduo;
 using namespace muduo::net;
 
@@ -40,7 +41,7 @@ void SocksServer::onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net
     auto it = status_.find(conn->name());
     if(it == status_.end()) {
         // corpse is speaking
-        LOG_FATAL << conn->name() << " - onMessage but no status";
+        LOG_FATAL << conn->name() << " - onMessage without status";
         abort();
     } else {
         auto status = it->second;
@@ -69,45 +70,66 @@ void SocksServer::onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net
 
 void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time)
 {
-    LOG_INFO << conn->name() << " - onMessage status WREQ";
+    LOG_INFO << conn->name() << " - onMessage - status WREQ";
     auto it = status_.find(conn->name());
     constexpr size_t headLen = 2;
-    if(buf->readableBytes() > headLen) {
-        const char ver = buf->peek()[0];
-        const char len = buf->peek()[1];
-        if(ver != '\x05') {
-            conn->forceClose();
-        } else if(buf->readableBytes() >= headLen + len) {
-            const char *mthd = buf->peek() + 2;
-            std::set<uint8_t> clientMethods;
-            for(int i = 0; i < len; ++i) {
-                clientMethods.insert(mthd[i]);
-            }
-            buf->retrieve(headLen + len);   // read and retrieve !!
-            if(clientMethods.find('\x02') != clientMethods.end()) {
+    if(buf->readableBytes() < headLen) {
+        return;
+    }
+    const char ver = buf->peek()[0];
+    const char len = buf->peek()[1];
+    if(ver != '\x05') {
+        LOG_INFO << " - onMessage - invalid VER";
+        conn->shutdown();
+        return;
+    }
+    if(buf->readableBytes() < headLen + len) {
+        return;
+    }
+    const char *mthd = buf->peek() + 2;
+    std::set<uint8_t> clientMethods;
+    for(int i = 0; i < len; ++i) {
+        clientMethods.insert(mthd[i]);
+    }
+    buf->retrieve(headLen + len);   // read and retrieve !!
+    switch (validate_mode_) {
+        case DYNAMIC_PSWD:
+            if(clientMethods.count('\x02')) {
                 char response[] = "V\x02";
                 response[0] = ver;
                 conn->send(response, 2);
-                // conn->setContext(boost::any('\x02'));
                 it->second = WVLDT;
             } else {
                 char response[] = "V\xff";
                 response[0] = ver;
                 conn->send(response, 2);
                 conn->shutdown();
-                buf->retrieveAll();
             }
-        }
+            break;
+        default:
+            // no auth or white list
+            if(clientMethods.count('\x00')) {
+                char response[] = "V\x00";
+                response[0] = ver;
+                conn->send(response, 2);
+                it->second = WVLDT;
+            } else {
+                char response[] = "V\xff";
+                response[0] = ver;
+                conn->send(response, 2);
+                conn->shutdown();
+            }
     }
 }
 
 void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time)
 {
-    LOG_INFO << conn->name() << " - onMessage status WVLDT";
+    LOG_INFO << conn->name() << " - onMessage - status WVLDT";
     auto it = status_.find(conn->name());
     switch(validate_mode_) {
-        case DYNAMIC_PSWD:    // PASSWORD
+        case DYNAMIC_PSWD:
         {
+            LOG_INFO << conn->name() << " - onMessage - validate with dynamic password";
             if(buf->readableBytes() < 2) {
                 return;
             }
@@ -123,11 +145,10 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
             }
             string passwd(buf->peek() + 2 + ulen + 1, buf->peek() + 2 + ulen + 1 + plen);
             buf->retrieve(1 + 1 + ulen + 1 + plen);
-            string raw = time.toFormattedString(false).substr(0, 10);
-            Md5Encode encode;
-            string rps = encode.Encode(raw);
-            LOG_INFO << "received password: " << passwd;
-            LOG_INFO << "valid password: " << rps;
+            string raw = time.toFormattedString(false).substr(0, 8);
+            LOG_INFO << conn->name() << " - received password " << passwd;
+            auto rps = EncodeServer::keyGen("iiyo" + raw + "koishi");
+            LOG_INFO << conn->name() << " - valid password " << rps;
             if(uname == "root" && passwd == rps) {
                 char res[] = { '\x01', '\x00' };    // success
                 conn->send(res, 2);
@@ -138,27 +159,28 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
                 conn->shutdown();
             }
         } 
-        break;
-        default:
+            break;
+        case WHITE_LIST:
         {
-            LOG_ERROR << " - onMessage invald valiation mode";
-            conn->shutdown();
+            LOG_INFO << conn->name() << " - onMessage - whitelist validation";
             return;
         }
+        default:
+            LOG_INFO << conn->name() << " - onMessage - validate with no auth";
+            return;
     }
 }
 
 void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time)
 {
-    LOG_INFO << conn->name() << " - onMessage status WCMD";
+    LOG_INFO << conn->name() << " - onMessage - status WCMD";
     if(buf->readableBytes() > 4) {
         const char ver = buf->peek()[0];
         const char cmd = buf->peek()[1];
         const char atyp = buf->peek()[3];
         if(ver != '\x05') {
             // teardown
-            LOG_INFO << conn->name() << " - onMessage invalid VER";
-            buf->retrieveAll();
+            LOG_ERROR << conn->name() << " - onMessage - invalid VER";
             conn->shutdown();
         } else {
             switch (cmd) {
@@ -179,7 +201,7 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                                 buf->retrieve(4 + 4 + 2);
                                 // setup tunnel to destination
                                 InetAddress dst_addr(sock_addr);
-                                LOG_INFO << conn->name() << " - onMessage CONNECT to " << dst_addr.toIpPort();
+                                LOG_INFO << conn->name() << " - onMessage - CONNECT to " << dst_addr.toIpPort();
                                 TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, dst_addr, conn);
                                 tunnel->setup();
                                 tunnel->connect();
@@ -201,7 +223,7 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                                     const void *pport = buf->peek() + 5 + len;
                                     uint16_t port = *static_cast<const uint16_t *>(pport);
                                     Hostname host(hostname);
-                                    LOG_INFO << conn->name() << " - onMessage CONNECT to " << hostname << ":" << ntohs(port);
+                                    LOG_INFO << conn->name() << " - onMessage - CONNECT to " << hostname << ":" << ntohs(port);
                                     if(!host.getHostByName()) {  // FIXME: non-blocking
                                         LOG_ERROR << conn->name() << " - " << hostname << " parse failed";
                                         SocksResponse response;
@@ -258,7 +280,7 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                     break;
                 default:
                 {
-                    LOG_INFO << conn->name() << " - onMessage unknown CMD";
+                    LOG_ERROR << conn->name() << " - onMessage unknown CMD";
                     conn->shutdown();
                 }
             }
@@ -268,7 +290,7 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
 
 void SocksServer::handleESTABL(const TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time)
 {
-    LOG_DEBUG << conn->name() << " - onMessage status ESTABL";
+    LOG_DEBUG << conn->name() << " - onMessage - status ESTABL";
     if(!conn->getContext().empty()) {
         const auto &destinationConn = boost::any_cast<const TcpConnectionPtr &>(conn->getContext());
         destinationConn->send(buf);

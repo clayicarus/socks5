@@ -6,16 +6,21 @@
 #include "EncodeServer.h"
 #include "MD5Encode.h"
 
+std::string EncodeServer::keyGen(const std::string &raw) 
+{
+    Md5Encode encode;
+    std::string rps = encode.Encode(raw);
+    return rps;
+}
+
 void EncodeServer::onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp)
 {
     LOG_INFO << conn->name() << " - get message";
     if(buf->readableBytes() > 255) {
         LOG_INFO << conn->name() << " - message too large";
-        buf->retrieveAll();
-        conn->forceClose();
+        conn->shutdown();
     } else {
-        Md5Encode encode;
-        auto s = encode.Encode(buf->retrieveAllAsString());
+        auto s = keyGen(buf->retrieveAllAsString());
         conn->send(s);
     }
 }

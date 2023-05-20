@@ -11,7 +11,7 @@
 class SocksServer : muduo::noncopyable {
 public:
     enum ValidationMode {
-        NONE, PSWD, DYNAMIC_PSWD, WHITE_LIST
+        NONE, DYNAMIC_PSWD, WHITE_LIST
     };
     SocksServer(muduo::net::EventLoop *loop, const muduo::net::InetAddress &listenAddr, ValidationMode validate_mode=NONE)
         : server_(loop, listenAddr, "SocksServer"), loop_(loop), validate_mode_(validate_mode)
