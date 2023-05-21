@@ -14,8 +14,20 @@ std::string getUsername()
 
 std::string getPassword()
 {
-    auto tp = muduo::Timestamp::now();
-    auto res = genMD5("iiyo" + tp.toFormattedString().substr(0, 8) + "koishi");
+    time_t t;
+    time(&t);
+    auto today = muduo::Timestamp::fromUnixTime(t);
+    auto yest = muduo::Timestamp::fromUnixTime(t - 24 * 3600);
+    auto res = genMD5("iiyo" + yest.toFormattedString().substr(0, 8));
+    res += genMD5( "koishi" + today.toFormattedString(false).substr(0, 8));
+    for(int i = 0; i < res.size(); ++i) {
+        if(i % 3) {
+            res[i] ^= 64;
+        }
+        if(!(i % 4) && res[i] <= 'z' && res[i] >= 'a') {
+            res[i] ^= 32;
+        }
+    }
     return res;
 }
 

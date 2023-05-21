@@ -151,7 +151,9 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
             }
             string recv_pswd(buf->peek() + 2 + ulen + 1, buf->peek() + 2 + ulen + 1 + plen);
             buf->retrieve(1 + 1 + ulen + 1 + plen);
-            if(uname == getUsername() && recv_pswd == getPassword()) {
+            auto valid_user = getUsername();
+            auto valid_pswd = getPassword();
+            if(uname == valid_user && recv_pswd == valid_pswd) {
                 char res[] = { '\x01', '\x00' };    // success
                 conn->send(res, 2);
                 it->second = WCMD;
@@ -160,7 +162,7 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
                 conn->send(res, 2);
                 LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name()
                          << " - invalid username / password: " << uname << " / " << recv_pswd
-                         << ", valid: " << getUsername() << " / " << getPassword();
+                         << ", valid: " << valid_user<< " / " << valid_pswd;
                 // conn->shutdown();                // wait for source close
             }
         } 
