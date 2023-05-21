@@ -92,7 +92,7 @@ private:
             conn->setHighWaterMarkCallback(std::bind(&Tunnel::onHighWaterMarkWeak,
                                                      std::weak_ptr<Tunnel>(shared_from_this()), kClient, _1, _2),
                                            kHighMark);
-            serverConn_->setContext(conn);  // Q2: record conn to match its client_ ?
+            serverConn_->setContext(conn);  // Q2: record conn to match its client_ ? how about return conn to src 
             serverConn_->startRead();       // Q1: when destination connected then start read source requests
             clientConn_ = conn;             // destination conn
             if(serverConn_->inputBuffer()->readableBytes() > 0) {   // Q1: not yet connected to destination but got requests from source
@@ -129,7 +129,8 @@ private:
     {
         using std::placeholders::_1;
 
-        LOG_INFO << (which == kServer ? "server" : "client")
+        LOG_INFO << "Tunnel-"<< this
+                 << (which == kServer ? "server" : "client")
                  << " onHighWaterMark " << conn->name()
                  << " bytes " << bytesToSent;
         if(which == kServer) {  // source output buffer full
@@ -161,7 +162,8 @@ private:
 
     void onWriteComplete(ServerClient which, const muduo::net::TcpConnectionPtr &conn)  // continue to send
     {
-        LOG_INFO << (which == kServer ? "server" : "client")
+        LOG_INFO << "Tunnel-"<< this 
+                 << (which == kServer ? "server" : "client")
                  << " onWriteComplete " << conn->name();
         if(which == kServer) {  // sent to destination(server) yet, source output buffer not full
             clientConn_->startRead();   // start to read from destination
