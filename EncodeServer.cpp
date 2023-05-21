@@ -4,23 +4,18 @@
 
 #include <muduo/base/Logging.h>
 #include "EncodeServer.h"
-#include "base/MD5Encode.h"
-
-std::string EncodeServer::keyGen(const std::string &raw) 
-{
-    Md5Encode encode;
-    std::string rps = encode.Encode(raw);
-    return rps;
-}
+#include "base/Utils.h"
 
 void EncodeServer::onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp)
 {
-    LOG_INFO << conn->name() << " - get message";
+    LOG_INFO << conn->peerAddress().toIpPort() << "->" << conn->name() 
+             << " - get message";
     if(buf->readableBytes() > 255) {
-        LOG_INFO << conn->name() << " - message too large";
+        LOG_WARN << conn->peerAddress().toIpPort() << "->" << conn->name()
+                 << " - message too large";
         conn->shutdown();
     } else {
-        auto s = keyGen(buf->retrieveAllAsString());
+        auto s = genMD5(buf->retrieveAllAsString());
         conn->send(s);
     }
 }

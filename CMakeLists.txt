@@ -9,13 +9,17 @@ link_directories(${CMAKE_CURRENT_SOURCE_DIR}/lib)
 
 set(SOURCE_FILE
         SocksServer.cpp
+        EncodeServer.cpp
         base/Hostname.cpp
         base/MD5Encode.cpp
-        EncodeServer.cpp
-        base/SocksResponse.cpp)
+        base/SocksResponse.cpp
+        base/Utils.cpp)
 set(LINK_LIST
         muduo_net muduo_base pthread)
 
 add_executable(socks5 main.cpp
         ${SOURCE_FILE})
 target_link_libraries(socks5 ${LINK_LIST})
+
+add_executable(test test.cpp)
+target_link_libraries(test ${LINK_LIST})

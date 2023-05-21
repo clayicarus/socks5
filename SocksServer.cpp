@@ -3,10 +3,9 @@
 //
 
 #include "SocksServer.h"
-#include <arpa/inet.h>
 #include <muduo/base/Logging.h>
 #include <muduo/net/InetAddress.h>
-#include "EncodeServer.h"
+#include "base/Utils.h"
 #include "base/Hostname.h"
 #include "base/SocksResponse.h"
 #include <set>
@@ -148,20 +147,19 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
             if(buf->readableBytes() < 2 + ulen + 1 + plen) {
                 return;
             }
-            string passwd(buf->peek() + 2 + ulen + 1, buf->peek() + 2 + ulen + 1 + plen);
+            string recv_pswd(buf->peek() + 2 + ulen + 1, buf->peek() + 2 + ulen + 1 + plen);
             buf->retrieve(1 + 1 + ulen + 1 + plen);
-            string raw = time.toFormattedString(false).substr(0, 8);
-            LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - received password " << passwd;
-            auto rps = EncodeServer::keyGen("iiyo" + raw + "koishi");
-            LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - valid password " << rps;
-            if(uname == "root" && passwd == rps) {
+            if(uname == getUsername() && recv_pswd == getPassword()) {
                 char res[] = { '\x01', '\x00' };    // success
                 conn->send(res, 2);
                 it->second = WCMD;
             } else {
                 char res[] = { '\x01', '\x01' };    // failed
                 conn->send(res, 2);
-                conn->shutdown();
+                LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name()
+                         << " - invalid username / password: " << uname << " / " << recv_pswd
+                         << ", valid: " << getUsername() << " / " << getPassword();
+                // conn->shutdown();                // wait for source close
             }
         } 
             break;
@@ -243,7 +241,7 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                         SocksResponse response;
                         response.initFailedResponse(hostname, port);
                         conn->send(response.responseData(), response.responseSize());
-                        conn->shutdown();
+                        // conn->shutdown();        // wait for source close
                         return;
                     }
                     sockaddr_in sock_addr;
@@ -281,13 +279,13 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
             break;
         case '\x02':    // CMD: BIND
         {
-            LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CMD-BIND";
+            LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CMD-BIND";
             conn->shutdown();
         }
             break;
         case '\x03':    //CMD: UDP_ASSOCIATE
         {
-            LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CMD-UDP_ASSOCIATE";
+            LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CMD-UDP_ASSOCIATE";
             conn->shutdown();
         }
             break;
@@ -304,7 +302,7 @@ void SocksServer::handleESTABL(const TcpConnectionPtr &conn, muduo::net::Buffer 
         const auto &destinationConn = boost::any_cast<const TcpConnectionPtr &>(conn->getContext());
         destinationConn->send(buf);
     } else if(failed_counts_[conn->name()]++ > 2) {
-        LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - failed to connect to destination";
+        LOG_ERROR << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - failed to connect to destination";
         conn->shutdown();
     }
 }
