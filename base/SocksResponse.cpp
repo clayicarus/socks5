@@ -62,3 +62,10 @@ void SocksResponse::initFailedResponse(const std::string &domain_name, uint16_t 
     response_ += std::string(temp, temp + sizeof(temp));
     valid_ = true;
 }
+
+void SocksResponse::initGeneralResponse(char rep)
+{
+    char r[] = { '\x05', rep };
+    response_.assign(r, r + sizeof(r));
+    valid_ = true;
+}

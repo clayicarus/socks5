@@ -20,17 +20,17 @@ class Tunnel : public std::enable_shared_from_this<Tunnel>, muduo::noncopyable {
 static constexpr size_t kHighMark = 1024 * 1024;
 public:
     Tunnel(muduo::net::EventLoop *loop,
-           const muduo::net::InetAddress &serverAddr,
-           const muduo::net::TcpConnectionPtr clientConn)
-    : client_(loop, serverAddr/* destination is client */, clientConn->name()),
-      serverConn_(clientConn)   // source conn
+           const muduo::net::InetAddress &destination,
+           const muduo::net::TcpConnectionPtr src_conn)
+    : client_(loop, destination, src_conn->name()),
+      serverConn_(src_conn), had_connected_(false)
     {
-        LOG_INFO << "Tunnel " << clientConn->peerAddress().toIpPort()
-                 << " <-> " << serverAddr.toIpPort();
+        LOG_INFO << "Tunnel-" << this << " " << src_conn->peerAddress().toIpPort()
+                 << " <-> " << destination.toIpPort();
     }
     ~Tunnel()
     {
-        LOG_DEBUG << "~Tunnel";
+        LOG_INFO << "~Tunnel-" << this;
     }
 
     void setup()
@@ -38,6 +38,7 @@ public:
         using std::placeholders::_1;
         using std::placeholders::_2;
         using std::placeholders::_3;
+        // FIXME: shared_from_this result in ~tunnel failed
         client_.setConnectionCallback(std::bind(&Tunnel::onClientConnection/* destination connection */,
                                                 shared_from_this(), _1));
         client_.setMessageCallback(std::bind(&Tunnel::onClientMessage,
@@ -55,28 +56,29 @@ public:
     void disconnect()
     {
         // how about not connected yet when source close actively?
-        if(!connected()) {
-            LOG_WARN << "Tunnel not connected yet";
-            teardown();
-        }
+        if(!hadConnected()) {
+            LOG_WARN << "Tunnel-"<< this <<" never connected yet";
+            client_.setConnectionCallback(muduo::net::defaultConnectionCallback);
+            client_.setMessageCallback(muduo::net::defaultMessageCallback);
+        } 
         client_.disconnect();
     }
 
-    bool connected() const 
+    bool hadConnected() const 
     {
-        return clientConn_ && clientConn_->connected();
+        return had_connected_;
     }
 
 private:
-    void teardown() // Q3: disconnect source conn actively
+    void teardown() // src or dest close first
     {
         client_.setConnectionCallback(muduo::net::defaultConnectionCallback);
         client_.setMessageCallback(muduo::net::defaultMessageCallback);
-        if(serverConn_) {
+        if(serverConn_) {   // Q3: disconnect source conn actively when dest close first
             serverConn_->setContext(boost::any());  // Q2 ?
             serverConn_->shutdown();    // how about close source directly ?
         }
-        clientConn_.reset();    // free shared_ptr (~clientConn_)
+        clientConn_.reset();    // ~clientConn_ in advance to prevent ~tunnel fail
     }
 
     void onClientConnection(const muduo::net::TcpConnectionPtr &conn)   // destination connection
@@ -96,8 +98,9 @@ private:
             if(serverConn_->inputBuffer()->readableBytes() > 0) {   // Q1: not yet connected to destination but got requests from source
                 conn->send(serverConn_->inputBuffer()); // send requests from source to destination
             }
+            had_connected_ = true;
         } else {    // Q3: destination disconnected actively
-            LOG_INFO << conn->name() << " - Source close passively";
+            LOG_INFO << "Tunnel-" << this << " - destination close";
             teardown(); // disconnect source conn actively
         }
     }
@@ -108,7 +111,7 @@ private:
     {
         LOG_DEBUG << conn->name() << " " << buf->readableBytes();
         if(serverConn_) {
-            LOG_DEBUG << conn->name() << " - Response to source";
+            LOG_DEBUG << conn->name() << " - response to source";
             serverConn_->send(buf); // send response from destination to source
         } else {    // source died
             buf->retrieveAll(); // discard all received data
@@ -181,6 +184,7 @@ private:
     muduo::net::TcpClient client_;
     muduo::net::TcpConnectionPtr  serverConn_;  // source
     muduo::net::TcpConnectionPtr clientConn_;   // destination
+    bool had_connected_;
 };
 typedef std::shared_ptr<Tunnel> TunnelPtr;
 

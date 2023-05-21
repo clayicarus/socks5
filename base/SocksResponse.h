@@ -17,6 +17,7 @@ public:
     void initSuccessResponse(const std::string &domain_name, uint16_t port);
     void initFailedResponse(const in_addr &ipv4_addr, uint16_t port, char rep = '\x01');
     void initFailedResponse(const std::string &domain_name, uint16_t port, char rep = '\x01');
+    void initGeneralResponse(char rep = '\x00');
     const void * responseData() const { return response_.c_str(); }
     std::string::size_type responseSize() const { return response_.size(); }
     bool isValid() const { return valid_; }

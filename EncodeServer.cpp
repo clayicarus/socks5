@@ -8,10 +8,10 @@
 
 void EncodeServer::onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp)
 {
-    LOG_INFO << conn->peerAddress().toIpPort() << "->" << conn->name() 
+    LOG_INFO << "EncodeServer - " << conn->peerAddress().toIpPort() << "->" << conn->name() 
              << " - get message";
     if(buf->readableBytes() > 255) {
-        LOG_WARN << conn->peerAddress().toIpPort() << "->" << conn->name()
+        LOG_WARN << "EncodeServer - " << conn->peerAddress().toIpPort() << "->" << conn->name()
                  << " - message too large";
         conn->shutdown();
     } else {

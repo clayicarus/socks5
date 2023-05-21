@@ -24,6 +24,8 @@ void SocksServer::onConnection(const muduo::net::TcpConnectionPtr &conn)
             status_[conn->name()] = WREQ;
         }
     } else {
+        LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name()
+                 << " - source close";
         auto it = tunnels_.find(conn->name());
         if(it != tunnels_.end()) {
             it->second->disconnect();
@@ -107,7 +109,7 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
                 char response[] = "V\xff";
                 response[0] = ver;
                 conn->send(response, 2);
-                conn->shutdown();
+                // conn->shutdown();
             }
             break;
         default:
@@ -121,7 +123,7 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
                 char response[] = "V\xff";
                 response[0] = ver;
                 conn->send(response, 2);
-                conn->shutdown();
+                // conn->shutdown();
             }
     }
 }
@@ -237,9 +239,9 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                     Hostname host(hostname);
                     LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CONNECT to " << hostname << ":" << ntohs(port);
                     if(!host.getHostByName()) {  // FIXME: non-blocking
-                        LOG_ERROR << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - " << hostname << " parse failed";
+                        LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - " << hostname << " parse failed";
                         SocksResponse response;
-                        response.initFailedResponse(hostname, port);
+                        response.initFailedResponse(hostname, port, '\x04');
                         conn->send(response.responseData(), response.responseSize());
                         // conn->shutdown();        // wait for source close
                         return;
@@ -252,7 +254,8 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                     buf->retrieve(5 + len + 2);
                     // setup tunnel to destination
                     InetAddress dst_addr(sock_addr);
-                    LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - " << hostname << " parsed as " << dst_addr.toIpPort();
+                    LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() 
+                             << " - onMessage - " << hostname << " parsed as " << dst_addr.toIpPort();
                     TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, dst_addr, conn);
                     tunnel->setup();
                     tunnel->connect();
@@ -266,13 +269,19 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                     break;
                 case '\x04':    // ATYP: ipv6
                 {
-                    LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CONNECT by ipv6";
-                    conn->shutdown();
+                    LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CONNECT by ipv6";
+                    SocksResponse rep;
+                    rep.initGeneralResponse('\x07');
+                    conn->send(rep.responseData(), rep.responseSize());
+                    // conn->shutdown();
                 }
                 default:
                 {
-                    LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - invalid CMD";
-                    conn->shutdown();
+                    LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - invalid ATYP";
+                    SocksResponse rep;
+                    rep.initGeneralResponse('\x07');
+                    conn->send(rep.responseData(), rep.responseSize());
+                    // conn->shutdown();
                 }
             }
         }
@@ -280,18 +289,27 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
         case '\x02':    // CMD: BIND
         {
             LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CMD-BIND";
-            conn->shutdown();
+            SocksResponse rep;
+            rep.initGeneralResponse('\x07');
+            conn->send(rep.responseData(), rep.responseSize());
+            // conn->shutdown();
         }
             break;
         case '\x03':    //CMD: UDP_ASSOCIATE
         {
             LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CMD-UDP_ASSOCIATE";
-            conn->shutdown();
+            SocksResponse rep;
+            rep.initGeneralResponse('\x07');
+            conn->send(rep.responseData(), rep.responseSize());
+            // conn->shutdown();
         }
             break;
         default:
-            LOG_ERROR << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - unknown CMD";
-            conn->shutdown();
+            LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - unknown CMD";
+            SocksResponse rep;
+            rep.initGeneralResponse('\x07');
+            conn->send(rep.responseData(), rep.responseSize());
+            // conn->shutdown();
     }
 }
 
