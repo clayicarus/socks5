@@ -8,7 +8,7 @@
 
 std::string getUsername()
 {
-    const static std::string username = "Koishi Komeiji";
+    const static std::string username = "Koishi_Komeiji";
     return username;
 }
 
