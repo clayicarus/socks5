@@ -1,6 +1,7 @@
 #include "Utils.h"
 #include "MD5Encode.h"
 #include <cstdio>
+#include <map>
 #include <string>
 #include <ctime>
 #include <muduo/base/Timestamp.h>
@@ -20,14 +21,13 @@ std::string getPassword()
 
 std::string genMD5(const std::string &raw) 
 {
-    static std::string old_raw;
-    static std::string old_md5;
-    if(raw == old_raw) {
-        return old_md5;
-    } 
+    static std::map<std::string, std::string> raw_to_md5;
+    auto it = raw_to_md5.find(raw);
+    if(it != raw_to_md5.end()) {
+        return it->second;
+    }
     Md5Encode encode;
     std::string rps = encode.Encode(raw);
-    old_md5 = rps;
-    old_raw = raw;
+    raw_to_md5.emplace(raw, rps);
     return rps;
 }
