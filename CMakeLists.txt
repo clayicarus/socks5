@@ -20,6 +20,3 @@ set(LINK_LIST
 add_executable(socks5 main.cpp
         ${SOURCE_FILE})
 target_link_libraries(socks5 ${LINK_LIST})
-
-add_executable(test test.cpp)
-target_link_libraries(test ${LINK_LIST})
