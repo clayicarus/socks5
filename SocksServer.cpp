@@ -85,7 +85,9 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
     const char ver = buf->peek()[0];
     const char len = buf->peek()[1];
     if(ver != '\x05') {
-        LOG_INFO << " - onMessage - invalid VER";
+        LOG_ERROR << conn->peerAddress().toIpPort()  << "->" << conn->name() 
+                  << " - onMessage - invalid VER";
+        buf->retrieveAll();
         conn->shutdown();
         return;
     }
@@ -109,7 +111,8 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
                 char response[] = "V\xff";
                 response[0] = ver;
                 conn->send(response, 2);
-                // conn->shutdown();
+                buf->retrieveAll();
+                // conn->shutdown();    // retrieve is necessary
             }
             break;
         default:
@@ -123,6 +126,7 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
                 char response[] = "V\xff";
                 response[0] = ver;
                 conn->send(response, 2);
+                buf->retrieveAll();
                 // conn->shutdown();
             }
     }
@@ -163,7 +167,8 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
                 LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name()
                          << " - invalid username / password: " << uname << " / " << recv_pswd
                          << ", valid: " << valid_user<< " / " << valid_pswd;
-                // conn->shutdown();                // wait for source close
+                buf->retrieveAll();
+                // conn->shutdown();                // wait for source close, retrieve is necessary
             }
         } 
             break;
@@ -189,7 +194,9 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
     const char atyp = buf->peek()[3];
     if(ver != '\x05') {
         // teardown
-        LOG_ERROR << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - invalid VER";
+        LOG_ERROR << conn->peerAddress().toIpPort()  << "->" << conn->name() 
+                  << " - onMessage - invalid VER";
+        buf->retrieveAll();
         conn->shutdown();
         return;
     } 
@@ -245,7 +252,8 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                         SocksResponse response;
                         response.initFailedResponse(hostname, port, '\x04');
                         conn->send(response.responseData(), response.responseSize());
-                        // conn->shutdown();        // wait for source close
+                        buf->retrieveAll();
+                        // conn->shutdown();        // wait for source close, but retrieve is necessary
                         return;
                     }
                     sockaddr_in sock_addr;
@@ -275,7 +283,8 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                     SocksResponse rep;
                     rep.initGeneralResponse('\x07');
                     conn->send(rep.responseData(), rep.responseSize());
-                    // conn->shutdown();
+                    buf->retrieveAll();
+                    // conn->shutdown();    // retrieve is necessary
                 }
                 default:
                 {
@@ -283,7 +292,8 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                     SocksResponse rep;
                     rep.initGeneralResponse('\x07');
                     conn->send(rep.responseData(), rep.responseSize());
-                    // conn->shutdown();
+                    buf->retrieveAll();
+                    // conn->shutdown();    // retrieve is necessary
                 }
             }
         }
@@ -294,7 +304,8 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
             SocksResponse rep;
             rep.initGeneralResponse('\x07');
             conn->send(rep.responseData(), rep.responseSize());
-            // conn->shutdown();
+            buf->retrieveAll();
+            // conn->shutdown();    // retrieve is necessary
         }
             break;
         case '\x03':    //CMD: UDP_ASSOCIATE
@@ -303,7 +314,8 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
             SocksResponse rep;
             rep.initGeneralResponse('\x07');
             conn->send(rep.responseData(), rep.responseSize());
-            // conn->shutdown();
+            buf->retrieveAll();
+            // conn->shutdown();    // retrieve is nececssary
         }
             break;
         default:
@@ -311,7 +323,8 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
             SocksResponse rep;
             rep.initGeneralResponse('\x07');
             conn->send(rep.responseData(), rep.responseSize());
-            // conn->shutdown();
+            buf->retrieveAll();
+            // conn->shutdown();    // retrieve is necessary
     }
 }
 
@@ -322,7 +335,9 @@ void SocksServer::handleESTABL(const TcpConnectionPtr &conn, muduo::net::Buffer 
         const auto &destinationConn = boost::any_cast<const TcpConnectionPtr &>(conn->getContext());
         destinationConn->send(buf);
     } else if(failed_counts_[conn->name()]++ > 2) {
-        LOG_ERROR << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - failed to connect to destination";
+        LOG_ERROR << conn->peerAddress().toIpPort()  << "->" << conn->name() 
+                  << " - failed to connect to destination";
+        buf->retrieveAll();
         conn->shutdown();
     }
 }
