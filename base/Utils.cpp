@@ -8,11 +8,25 @@
 
 std::string getUsername()
 {
-    const static std::string username = "Koishi_Komeiji";
+    const static std::string username = "koishi";
     return username;
 }
 
-std::string getPassword()
+std::string genPassword(const std::string &raw) 
+{
+    std::string res{genMD5(raw)};
+    for(int i = 0; i < res.size(); ++i) {
+        if(i % 3) {
+            res[i] ^= 64;
+        }
+        if(!(i % 4) && res[i] <= 'z' && res[i] >= 'a') {
+            res[i] ^= 32;
+        }
+    }
+    return res;
+}
+
+std::string getGeneralPassword()
 {
     time_t t;
     time(&t);

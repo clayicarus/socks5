@@ -25,4 +25,8 @@ void EncodeServer::onConnection(const muduo::net::TcpConnectionPtr &conn)
     LOG_INFO << "EncodeServer - " << conn->peerAddress().toIpPort() << "->"
              << conn->localAddress().toIpPort() << " is "
              << (conn->connected() ? "UP" : "DOWN");
+    auto res = genPassword(conn->peerAddress().toIp());
+    conn->send(res);
+    LOG_DEBUG << "EncodeServer - " << conn->peerAddress().toIpPort() << "->"
+              << conn->localAddress().toIpPort() << " key sent";
 }

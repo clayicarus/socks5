@@ -132,6 +132,21 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
     }
 }
 
+bool authenticate(const TcpConnectionPtr &conn, muduo::Timestamp time, std::string user, std::string pswd) 
+{
+    auto valid_user = getUsername();
+    auto valid_pswd = getGeneralPassword();
+    auto and_ps = genPassword(conn->peerAddress().toIp());
+    if(user != valid_user) {
+        return false;
+    }
+    if(pswd == valid_pswd || pswd == and_ps) {
+        return true;
+    } else {
+        return false;
+    }
+}
+
 void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time)
 {
     LOG_DEBUG << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - status WVLDT";
@@ -155,9 +170,7 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
             }
             string recv_pswd(buf->peek() + 2 + ulen + 1, buf->peek() + 2 + ulen + 1 + plen);
             buf->retrieve(1 + 1 + ulen + 1 + plen);
-            auto valid_user = getUsername();
-            auto valid_pswd = getPassword();
-            if(uname == valid_user && recv_pswd == valid_pswd) {
+            if(authenticate(conn, time, uname, recv_pswd)) {
                 char res[] = { '\x01', '\x00' };    // success
                 conn->send(res, 2);
                 it->second = WCMD;
@@ -165,8 +178,7 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
                 char res[] = { '\x01', '\x01' };    // failed
                 conn->send(res, 2);
                 LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name()
-                         << " - invalid username / password: " << uname << " / " << recv_pswd
-                         << ", valid: " << valid_user<< " / " << valid_pswd;
+                         << " - invalid username / password: " << uname << " / " << recv_pswd;
                 buf->retrieveAll();
                 // conn->shutdown();                // wait for source close, retrieve is necessary
             }
