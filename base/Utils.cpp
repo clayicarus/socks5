@@ -1,5 +1,6 @@
 #include "Utils.h"
 #include "MD5Encode.h"
+#include <cassert>
 #include <cstdio>
 #include <map>
 #include <string>
@@ -42,7 +43,8 @@ std::string getGeneralPassword()
             res[i] ^= 32;
         }
     }
-    return res;
+    assert(res.size() == 64);
+    return res.substr(16, 32);
 }
 
 std::string genMD5(const std::string &raw) 
