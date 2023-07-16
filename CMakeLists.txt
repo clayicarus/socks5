@@ -10,7 +10,6 @@ link_directories(${CMAKE_CURRENT_SOURCE_DIR}/lib)
 set(SOURCE_FILE
         SocksServer.cpp
         EncodeServer.cpp
-        base/Hostname.cpp
         base/MD5Encode.cpp
         base/SocksResponse.cpp
         base/Utils.cpp)

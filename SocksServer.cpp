@@ -6,7 +6,6 @@
 #include <muduo/base/Logging.h>
 #include <muduo/net/InetAddress.h>
 #include "base/Utils.h"
-#include "base/Hostname.h"
 #include "base/SocksResponse.h"
 #include <set>
 #include <string>
@@ -256,10 +255,11 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                     }
                     const std::string hostname(buf->peek() + 5, buf->peek() + 5 + len);
                     const void *pport = buf->peek() + 5 + len;
-                    uint16_t port = *static_cast<const uint16_t *>(pport);
-                    Hostname host(hostname);
+                    uint16_t port = *static_cast<const uint16_t *>(pport);  // network endian
+                    InetAddress des{ ntohs(port) };
+                    InetAddress::resolve(hostname, &des);
                     LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CONNECT to " << hostname << ":" << ntohs(port);
-                    if(!host.getHostByName()) {  // FIXME: non-blocking
+                    if(!InetAddress::resolve(hostname, &des)) {  // FIXME: non-blocking
                         LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - " << hostname << " parse failed";
                         SocksResponse response;
                         response.initFailedResponse(hostname, port, '\x04');
@@ -268,24 +268,18 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                         // conn->shutdown();        // wait for source close, but retrieve is necessary
                         return;
                     }
-                    sockaddr_in sock_addr;
-                    memZero(&sock_addr, sizeof(sock_addr));
-                    sock_addr.sin_family = AF_INET;
-                    sock_addr.sin_addr = host.address().front();
-                    sock_addr.sin_port = port;
                     buf->retrieve(5 + len + 2);
                     // setup tunnel to destination
-                    InetAddress dst_addr(sock_addr);
-                    LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() 
-                             << " - onMessage - " << hostname << " parsed as " << dst_addr.toIpPort();
-                    TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, dst_addr, conn);
+                    LOG_DEBUG << conn->peerAddress().toIpPort()  << "->" << conn->name() 
+                             << " - onMessage - " << hostname << " parsed as " << des.toIpPort();
+                    TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, des, conn);
                     tunnel->setup();
                     tunnel->connect();
                     tunnels_[conn->name()] = tunnel; // is necessary
                     SocksResponse response;
                     status_[conn->name()] = ESTABL;
                     // send response
-                    response.initSuccessResponse(hostname, sock_addr.sin_port);
+                    response.initSuccessResponse(hostname, port);
                     conn->send(response.responseData(), response.responseSize());
                 }
                     break;
