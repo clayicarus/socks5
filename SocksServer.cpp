@@ -22,8 +22,6 @@ void SocksServer::onConnection(const muduo::net::TcpConnectionPtr &conn)
             status_[conn->name()] = WREQ;
         }
     } else {
-        LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name()
-                 << " - source close";
         auto it = tunnels_.find(conn->name());
         if(it != tunnels_.end()) {
             it->second->disconnect();
@@ -133,21 +131,6 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
     }
 }
 
-bool authenticate(const TcpConnectionPtr &conn, muduo::Timestamp time, std::string user, std::string pswd) 
-{
-    auto valid_user = getUsername();
-    auto valid_pswd = getGeneralPassword();
-    auto and_ps = genPassword(conn->peerAddress().toIp());
-    if(user != valid_user) {
-        return false;
-    }
-    if(pswd == valid_pswd || pswd == and_ps) {
-        return true;
-    } else {
-        return false;
-    }
-}
-
 void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time)
 {
     LOG_DEBUG << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - status WVLDT";
@@ -171,7 +154,7 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
             }
             string recv_pswd(buf->peek() + 2 + ulen + 1, buf->peek() + 2 + ulen + 1 + plen);
             buf->retrieve(1 + 1 + ulen + 1 + plen);
-            if(authenticate(conn, time, uname, recv_pswd)) {
+            if(authenticate(uname, recv_pswd)) {
                 char res[] = { '\x01', '\x00' };    // success
                 conn->send(res, 2);
                 it->second = WCMD;

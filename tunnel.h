@@ -100,7 +100,7 @@ private:
             }
             had_connected_ = true;
         } else {    // Q3: destination disconnected actively
-            LOG_INFO << "Tunnel-" << this << " - destination close";
+            LOG_DEBUG << "Tunnel-" << this << " - destination close";
             teardown(); // disconnect source conn actively
         }
     }

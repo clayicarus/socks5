@@ -7,10 +7,10 @@
 #include <ctime>
 #include <muduo/base/Timestamp.h>
 
-std::string getUsername()
+const char *getUsername()
 {
-    const static std::string username = "koishi";
-    return username;
+    static constexpr char name[] = "koishi";
+    return name;
 }
 
 std::string genPassword(const std::string &raw) 
@@ -31,31 +31,29 @@ std::string getGeneralPassword()
 {
     time_t t;
     time(&t);
-    auto today = muduo::Timestamp::fromUnixTime(t);
-    auto yest = muduo::Timestamp::fromUnixTime(t - 24 * 3600);
-    auto res = genMD5("iiyo" + yest.toFormattedString().substr(0, 8));
-    res += genMD5( "koishi" + today.toFormattedString(false).substr(0, 8));
-    for(int i = 0; i < res.size(); ++i) {
-        if(i % 3) {
-            res[i] ^= 64;
-        }
-        if(!(i % 4) && res[i] <= 'z' && res[i] >= 'a') {
-            res[i] ^= 32;
-        }
+    auto one_week = 24 * 3600 * 7;
+    t = t / one_week * one_week;
+    static time_t ps_time{0};
+    static std::string pswd;
+    if(ps_time == t) {
+        return pswd;
     }
-    assert(res.size() == 64);
-    return res.substr(16, 32);
+    ps_time = t;
+    pswd = genPassword("komeiji" + std::to_string(t) + getUsername());
+    return pswd;
 }
 
 std::string genMD5(const std::string &raw) 
 {
-    static std::map<std::string, std::string> raw_to_md5;
-    auto it = raw_to_md5.find(raw);
-    if(it != raw_to_md5.end()) {
-        return it->second;
-    }
     Md5Encode encode;
     std::string rps = encode.Encode(raw);
-    raw_to_md5.emplace(raw, rps);
     return rps;
+}
+
+bool authenticate(const std::string &user, const std::string &pswd)
+{
+    auto vu = getUsername();
+    auto vps = getGeneralPassword();
+    // printf("valid user: %s, valid password: %s\n", vu, vps.c_str());
+    return vu == user && pswd == vps;
 }
