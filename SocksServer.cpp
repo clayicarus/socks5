@@ -3,10 +3,9 @@
 //
 
 #include "SocksServer.h"
-#include <muduo/base/Logging.h>
-#include <muduo/net/InetAddress.h>
 #include "base/Utils.h"
 #include "base/SocksResponse.h"
+#include "muduo/base/Logging.h"
 #include <set>
 #include <string>
 using namespace muduo;
@@ -14,7 +13,7 @@ using namespace muduo::net;
 
 void SocksServer::onConnection(const muduo::net::TcpConnectionPtr &conn)
 {
-    LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() 
+    LOG_DEBUG << conn->peerAddress().toIpPort()  << "->" << conn->name() 
              << (conn->connected() ? " UP" : " DOWN");
     if(conn->connected()) {
         conn->setTcpNoDelay(true);
@@ -68,7 +67,10 @@ void SocksServer::onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net
                 }
             case ESTABL:
                 handleESTABL(conn, buf, time);
-            break;
+                break;
+            case RESOLVING:
+                LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - recv messages when resolving";
+                break;
         }
     }
 }
@@ -256,31 +258,16 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                     const std::string hostname(buf->peek() + 5, buf->peek() + 5 + len);
                     const void *pport = buf->peek() + 5 + len;
                     uint16_t port = *static_cast<const uint16_t *>(pport);  // network endian
-                    InetAddress des{ ntohs(port) };
-                    InetAddress::resolve(hostname, &des);
-                    LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CONNECT to " << hostname << ":" << ntohs(port);
-                    if(!InetAddress::resolve(hostname, &des)) {  // FIXME: non-blocking
-                        LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - " << hostname << " parse failed";
-                        SocksResponse response;
-                        response.initFailedResponse(hostname, port, '\x04');
-                        conn->send(response.responseData(), response.responseSize());
-                        buf->retrieveAll();
-                        // conn->shutdown();        // wait for source close, but retrieve is necessary
-                        return;
-                    }
                     buf->retrieve(5 + len + 2);
-                    // setup tunnel to destination
-                    LOG_DEBUG << conn->peerAddress().toIpPort()  << "->" << conn->name() 
-                             << " - onMessage - " << hostname << " parsed as " << des.toIpPort();
-                    TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, des, conn);
-                    tunnel->setup();
-                    tunnel->connect();
-                    tunnels_[conn->name()] = tunnel; // is necessary
-                    SocksResponse response;
-                    status_[conn->name()] = ESTABL;
-                    // send response
-                    response.initSuccessResponse(hostname, port);
-                    conn->send(response.responseData(), response.responseSize());
+                    LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CONNECT to " << hostname << ":" << ntohs(port);
+                    status_[conn->name()] = RESOLVING;
+                    resolver_.resolve(hostname, [this, conn, buf, time, hostname, port](const InetAddress &addr){
+                        // FIXME if conn dtor before resolved
+                        InetAddress des{addr.toIp(), ntohs(port)};
+                        LOG_DEBUG << conn->peerAddress().toIpPort()  << "->" << conn->name() 
+                                 << " - onMessage - " << hostname << " parsed as " << des.toIpPort();
+                        onResolved(conn, buf, des);
+                    });
                 }
                     break;
                 case '\x04':    // ATYP: ipv6
@@ -331,6 +318,22 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
             conn->send(rep.responseData(), rep.responseSize());
             buf->retrieveAll();
             // conn->shutdown();    // retrieve is necessary
+    }
+}
+
+void SocksServer::onResolved(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, const muduo::net::InetAddress &addr)
+{
+    TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, addr, conn);
+    tunnel->setup();
+    tunnel->connect();
+    tunnels_[conn->name()] = tunnel; // is necessary
+    SocksResponse response;
+    status_[conn->name()] = ESTABL;
+    // send response
+    response.initSuccessResponse(in_addr {addr.ipv4NetEndian()}, addr.port());
+    conn->send(response.responseData(), response.responseSize());
+    if(buf->readableBytes() > 0) {
+        handleESTABL(conn, buf, Timestamp::now());
     }
 }
 

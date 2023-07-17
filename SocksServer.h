@@ -8,6 +8,7 @@
 #include <map>
 #include <muduo/net/TcpServer.h>
 #include <string>
+#include "muduo/cdns/Resolver.h"
 #include "tunnel.h"
 
 class SocksServer : muduo::noncopyable {
@@ -16,7 +17,7 @@ public:
         NONE, DYNAMIC_PSWD, WHITE_LIST
     };
     SocksServer(muduo::net::EventLoop *loop, const muduo::net::InetAddress &listenAddr, ValidationMode validate_mode=NONE)
-        : server_(loop, listenAddr, "SocksServer"), loop_(loop), validate_mode_(validate_mode)
+        : server_(loop, listenAddr, "SocksServer"), loop_(loop), validate_mode_(validate_mode), resolver_(loop)
     {
         server_.setConnectionCallback([this] (const auto &conn) {
             onConnection(conn);
@@ -30,10 +31,11 @@ public:
     void onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp);
 private:
     enum Status {
-        WREQ, WVLDT, WCMD, ESTABL
+        WREQ, WVLDT, WCMD, RESOLVING, ESTABL
     };
     muduo::net::TcpServer server_;
     muduo::net::EventLoop *loop_;
+    cdns::Resolver resolver_;
     std::map<std::string, TunnelPtr> tunnels_;
     std::map<std::string, Status> status_;
     std::map<std::string, int> failed_counts_;
@@ -43,6 +45,8 @@ private:
     void handleWVLDT(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
     void handleWCMD(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
     void handleESTABL(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
+    void onResolved(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf,
+                    const muduo::net::InetAddress &addr);
 };
 
 

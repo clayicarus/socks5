@@ -14,7 +14,7 @@ set(SOURCE_FILE
         base/SocksResponse.cpp
         base/Utils.cpp)
 set(LINK_LIST
-        muduo_net muduo_base pthread)
+        muduo_cdns cares muduo_net muduo_base pthread)
 
 add_executable(socks5 main.cpp
         ${SOURCE_FILE})
