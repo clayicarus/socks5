@@ -31,10 +31,10 @@ void SocksServer::onConnection(const muduo::net::TcpConnectionPtr &conn)
         if(is != status_.end()) {
             status_.erase(is);
         }
-        auto ic = failed_counts_.find(conn->name());
-        if(ic != failed_counts_.end()) {
-            failed_counts_.erase(ic);
-        }
+        // auto ic = failed_counts_.find(conn->name());
+        // if(ic != failed_counts_.end()) {
+        //     failed_counts_.erase(ic);
+        // }
     }
 }
 
@@ -326,10 +326,11 @@ void SocksServer::handleESTABL(const TcpConnectionPtr &conn, muduo::net::Buffer 
     if(!conn->getContext().empty()) {
         const auto &destinationConn = boost::any_cast<const TcpConnectionPtr &>(conn->getContext());
         destinationConn->send(buf);
-    } else if(failed_counts_[conn->name()]++ > 2) {
-        LOG_ERROR << conn->peerAddress().toIpPort()  << "->" << conn->name() 
-                  << " - failed to connect to destination";
-        buf->retrieveAll();
-        conn->shutdown();
-    }
+    } 
+    // else if(failed_counts_[conn->name()]++ > 2) {
+    //     LOG_ERROR << conn->peerAddress().toIpPort()  << "->" << conn->name() 
+    //               << " - failed to connect to destination";
+    //     buf->retrieveAll();
+    //     conn->shutdown();
+    // }
 }

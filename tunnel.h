@@ -12,18 +12,21 @@
 #include <muduo/net/InetAddress.h>
 #include <muduo/net/TcpClient.h>
 #include <muduo/net/TcpServer.h>
-
-#include <algorithm>
+#include "muduo/net/TimerId.h"
 
 // only in tunnel can get response from destination
 class Tunnel : public std::enable_shared_from_this<Tunnel>, muduo::noncopyable {
 static constexpr size_t kHighMark = 1024 * 1024;
+static constexpr double kConnectTimeout = 150;  // unreachable error will throw in about 120 secs
 public:
     Tunnel(muduo::net::EventLoop *loop,
            const muduo::net::InetAddress &destination,
            const muduo::net::TcpConnectionPtr src_conn)
-    : client_(loop, destination, src_conn->name()),
-      serverConn_(src_conn), had_connected_(false)
+    : loop_(loop), 
+      client_(loop, destination, src_conn->name()),
+      serverConn_(src_conn), 
+    //   had_connected_(false), 
+      timeoutTimer_()
     {
         LOG_INFO << "Tunnel-" << this << " " << src_conn->peerAddress().toIpPort()
                  << " <-> " << destination.toIpPort();
@@ -37,43 +40,64 @@ public:
     {
         using std::placeholders::_1;
         using std::placeholders::_2;
-        using std::placeholders::_3;
         // FIXME: shared_from_this result in ~tunnel failed
-        client_.setConnectionCallback(std::bind(&Tunnel::onClientConnection/* destination connection */,
-                                                shared_from_this(), _1));
-        client_.setMessageCallback(std::bind(&Tunnel::onClientMessage,
-                                             shared_from_this(), _1, _2, _3));
-        serverConn_->setHighWaterMarkCallback(std::bind(&Tunnel::onHighWaterMarkWeak,
-                                                        std::weak_ptr<Tunnel>(shared_from_this()), kServer, _1, _2),
+        // client_.setConnectionCallback(std::bind(&Tunnel::onClientConnection/* destination connection */, 
+        //                                             weak_from_this(), _1)); // why shared_from_this() here?
+        // client_.setMessageCallback(std::bind(&Tunnel::onClientMessage,
+        //                                          weak_from_this(), _1, _2, _3));
+        auto wk = weak_from_this();
+        client_.setConnectionCallback([wk](const auto &conn){
+            auto sp = wk.lock();
+            if(sp) {
+                sp->onClientConnection(conn);
+            }
+        });
+        client_.setMessageCallback([wk](const auto &conn, auto *buf, auto time){
+            auto sp = wk.lock();
+            if(sp) {
+                sp->onClientMessage(conn, buf, time);
+            }
+        });
+        serverConn_->setHighWaterMarkCallback(std::bind(&Tunnel::onHighWaterMarkWeak, 
+                                              weak_from_this(), kServer, _1, _2),
                                               kHighMark);
     }
 
     void connect()
     {
         client_.connect();
+        // if ~Tunnel before it run
+        // auto wp = weak_from_this();
+        // timeoutTimer_ = loop_->runAfter(kConnectTimeout, [wp]{
+        //     // weak callback?
+        //     auto sp = wp.lock();
+        //     if(sp && !sp->clientConn_) {
+        //         sp->teardown();
+        //     }
+        // });
     }
 
     void disconnect()
     {
         // how about not connected yet when source close actively?
-        if(!hadConnected()) {
-            LOG_WARN << "Tunnel-"<< this <<" never connected yet";
-            client_.setConnectionCallback(muduo::net::defaultConnectionCallback);
-            client_.setMessageCallback(muduo::net::defaultMessageCallback);
-        } 
+        // if(!hadConnected()) {
+            // LOG_WARN << "Tunnel-"<< this <<" never connected yet";
+            // client_.setConnectionCallback(muduo::net::defaultConnectionCallback);
+            // client_.setMessageCallback(muduo::net::defaultMessageCallback);
+        // } 
         client_.disconnect();
     }
 
-    bool hadConnected() const 
-    {
-        return had_connected_;
-    }
+    // bool hadConnected() const 
+    // {
+    //     return had_connected_;
+    // }
 
 private:
     void teardown() // src or dest close first
     {
-        client_.setConnectionCallback(muduo::net::defaultConnectionCallback);
-        client_.setMessageCallback(muduo::net::defaultMessageCallback);
+        // client_.setConnectionCallback(muduo::net::defaultConnectionCallback);
+        // client_.setMessageCallback(muduo::net::defaultMessageCallback);
         if(serverConn_) {   // Q3: disconnect source conn actively when dest close first
             serverConn_->setContext(boost::any());  // Q2 ?
             serverConn_->shutdown();    // how about close source directly ?
@@ -90,15 +114,16 @@ private:
         if(conn->connected()) { // destination connected
             conn->setTcpNoDelay(true);
             conn->setHighWaterMarkCallback(std::bind(&Tunnel::onHighWaterMarkWeak,
-                                                     std::weak_ptr<Tunnel>(shared_from_this()), kClient, _1, _2),
-                                           kHighMark);
+                                                         weak_from_this(), kClient, _1, _2), 
+                             kHighMark);
             serverConn_->setContext(conn);  // Q2: record conn to match its client_ ? how about return conn to src 
             serverConn_->startRead();       // Q1: when destination connected then start read source requests
             clientConn_ = conn;             // destination conn
             if(serverConn_->inputBuffer()->readableBytes() > 0) {   // Q1: not yet connected to destination but got requests from source
                 conn->send(serverConn_->inputBuffer()); // send requests from source to destination
             }
-            had_connected_ = true;
+            loop_->cancel(timeoutTimer_);   // connected successfully
+            // had_connected_ = true;
         } else {    // Q3: destination disconnected actively
             LOG_DEBUG << "Tunnel-" << this << " - destination close";
             teardown(); // disconnect source conn actively
@@ -114,7 +139,7 @@ private:
             LOG_DEBUG << conn->name() << " - response to source";
             serverConn_->send(buf); // send response from destination to source
         } else {    // source died
-            buf->retrieveAll(); // discard all received data
+            // buf->retrieveAll(); // discard all received data
             abort();
         }
     }
@@ -152,7 +177,7 @@ private:
     static void onHighWaterMarkWeak(const std::weak_ptr<Tunnel> &wkTunnel,
                                     ServerClient which,
                                     const muduo::net::TcpConnectionPtr &conn,
-                                    size_t bytesToSent) // weak callback for what ?
+                                    size_t bytesToSent) // weak callback for when serverConn close but serverConn exist 
     {
         std::shared_ptr<Tunnel> tunnel = wkTunnel.lock();
         if(tunnel) {
@@ -183,10 +208,12 @@ private:
         }
     }
 
+    muduo::net::EventLoop *loop_;
     muduo::net::TcpClient client_;
     muduo::net::TcpConnectionPtr  serverConn_;  // source
     muduo::net::TcpConnectionPtr clientConn_;   // destination
-    bool had_connected_;
+    muduo::net::TimerId timeoutTimer_;
+    // bool had_connected_;
 };
 typedef std::shared_ptr<Tunnel> TunnelPtr;
 

@@ -38,7 +38,7 @@ private:
     cdns::Resolver resolver_;
     std::map<std::string, TunnelPtr> tunnels_;
     std::map<std::string, Status> status_;
-    std::map<std::string, int> failed_counts_;
+    // std::map<std::string, int> failed_counts_;
     ValidationMode validate_mode_;
 
     void handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
