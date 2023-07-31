@@ -306,11 +306,18 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
 
 void SocksServer::onResolved(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, const muduo::net::InetAddress &addr)
 {
+    SocksResponse response;
+    // FIXME: more effective way to judge if resolve failed
+    if(addr.toIp() == "0.0.0.0") {
+        response.initFailedResponse(addr.toIp(), addr.port());
+        conn->send(response.responseData(), response.responseSize());
+        buf->retrieveAll();
+        return;
+    }
     TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, addr, conn);
     tunnel->setup();
     tunnel->connect();
     tunnels_[conn->name()] = tunnel; // is necessary
-    SocksResponse response;
     status_[conn->name()] = ESTABL;
     // send response
     response.initSuccessResponse(in_addr {addr.ipv4NetEndian()}, addr.port());
