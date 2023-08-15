@@ -6,6 +6,7 @@
 #include "base/Utils.h"
 #include "base/SocksResponse.h"
 #include "muduo/base/Logging.h"
+#include "muduo/net/InetAddress.h"
 #include <set>
 #include <string>
 using namespace muduo;
@@ -179,6 +180,15 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
     }
 }
 
+bool isValidIP(const InetAddress &addr)
+{
+    auto ip_prefix = addr.toIp().substr(0, addr.toIp().find('.'));
+    if(ip_prefix == "0" || ip_prefix == "127" || ip_prefix == "192") {
+        return false;
+    }
+    return true;
+}
+
 void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time)
 {
     LOG_DEBUG << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - status WCMD";
@@ -217,6 +227,14 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                     buf->retrieve(4 + 4 + 2);
                     // setup tunnel to destination
                     InetAddress dst_addr(sock_addr);
+                    if (!isValidIP(dst_addr)) {
+                        LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - request to invalid address " << dst_addr.toIpPort();
+                        SocksResponse response;
+                        response.initFailedResponse(dst_addr.toIp(), dst_addr.port());
+                        conn->send(response.responseData(), response.responseSize());
+                        buf->retrieveAll();
+                        return;
+                    }
                     LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CONNECT to " << dst_addr.toIpPort();
                     TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, dst_addr, conn);
                     tunnel->setup();
@@ -308,7 +326,7 @@ void SocksServer::onResolved(const muduo::net::TcpConnectionPtr &conn, muduo::ne
 {
     SocksResponse response;
     // FIXME: more effective way to judge if resolve failed
-    if(addr.toIp() == "0.0.0.0") {
+    if (!isValidIP(addr)) {
         response.initFailedResponse(addr.toIp(), addr.port());
         conn->send(response.responseData(), response.responseSize());
         buf->retrieveAll();
