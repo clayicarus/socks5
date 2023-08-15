@@ -94,15 +94,16 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
     // x02 password authentication, x00 none, xff invalid
     // only for passsword auth
     if(std::find(mthd, mthd + len, '\x02') != mthd + len) {
-        char response[] = "V\x02";
-        response[0] = ver;
-        conn->send(response, 2);
+        // available auth response, don't send it until validate successfully
+        // char response[] = "V\x02";
+        // response[0] = ver;
+        // conn->send(response, 2);
         it->second = WVLDT;
     } else {
-        // response to invalid method
-        char response[] = "V\xff";
-        response[0] = ver;
-        conn->send(response, 2);
+        // response to invalid method, but won't send it
+        // char response[] = "V\xff";
+        // response[0] = ver;
+        // conn->send(response, 2);
         buf->retrieveAll();
     }
 }
@@ -128,12 +129,14 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
     string recv_pswd(buf->peek() + 2 + ulen + 1, buf->peek() + 2 + ulen + 1 + plen);
     buf->retrieve(1 + 1 + ulen + 1 + plen);
     if(authenticate(uname, recv_pswd)) {
-        char res[] = { '\x01', '\x00' };    // success
-        conn->send(res, 2);
+        // success including WREQ's response
+        char res[] = { '\x05', '\x02', '\x01', '\x00' };    
+        conn->send(res, sizeof(res) / sizeof(char));
         it->second = WCMD;
     } else {
-        char res[] = { '\x01', '\x01' };    // failed
-        conn->send(res, 2);
+        // failed to validate, but won't send response
+        // char res[] = { '\x01', '\x01' };    
+        // conn->send(res, 2);
         LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name()
                     << " - invalid username / password: " << uname << " / " << recv_pswd;
         buf->retrieveAll();
