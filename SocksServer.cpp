@@ -7,7 +7,6 @@
 #include "base/SocksResponse.h"
 #include "muduo/base/Logging.h"
 #include "muduo/net/InetAddress.h"
-#include <set>
 #include <string>
 using namespace muduo;
 using namespace muduo::net;
@@ -32,10 +31,6 @@ void SocksServer::onConnection(const muduo::net::TcpConnectionPtr &conn)
         if(is != status_.end()) {
             status_.erase(is);
         }
-        // auto ic = failed_counts_.find(conn->name());
-        // if(ic != failed_counts_.end()) {
-        //     failed_counts_.erase(ic);
-        // }
     }
 }
 
@@ -95,40 +90,20 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
         return;
     }
     const char *mthd = buf->peek() + 2;
-    std::set<uint8_t> clientMethods;
-    for(int i = 0; i < len; ++i) {
-        clientMethods.insert(mthd[i]);
-    }
     buf->retrieve(headLen + len);   // read and retrieve !!
-    switch (validate_mode_) {
-        case DYNAMIC_PSWD:
-            if(clientMethods.count('\x02')) {
-                char response[] = "V\x02";
-                response[0] = ver;
-                conn->send(response, 2);
-                it->second = WVLDT;
-            } else {
-                char response[] = "V\xff";
-                response[0] = ver;
-                conn->send(response, 2);
-                buf->retrieveAll();
-                // conn->shutdown();    // retrieve is necessary
-            }
-            break;
-        default:
-            // no auth or white list
-            if(clientMethods.count('\x00')) {
-                char response[] = "V\x00";
-                response[0] = ver;
-                conn->send(response, 2);
-                it->second = WVLDT;
-            } else {
-                char response[] = "V\xff";
-                response[0] = ver;
-                conn->send(response, 2);
-                buf->retrieveAll();
-                // conn->shutdown();
-            }
+    // x02 password authentication, x00 none, xff invalid
+    // only for passsword auth
+    if(std::find(mthd, mthd + len, '\x02') != mthd + len) {
+        char response[] = "V\x02";
+        response[0] = ver;
+        conn->send(response, 2);
+        it->second = WVLDT;
+    } else {
+        // response to invalid method
+        char response[] = "V\xff";
+        response[0] = ver;
+        conn->send(response, 2);
+        buf->retrieveAll();
     }
 }
 
@@ -136,47 +111,33 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
 {
     LOG_DEBUG << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - status WVLDT";
     auto it = status_.find(conn->name());
-    switch(validate_mode_) {
-        case DYNAMIC_PSWD:
-        {
-            LOG_DEBUG << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - validate with dynamic password";
-            if(buf->readableBytes() < 2) {
-                return;
-            }
-            const char ver = buf->peek()[0];
-            const char ulen = buf->peek()[1];
-            if(buf->readableBytes() < 2 + ulen) {
-                return;
-            }
-            string uname(buf->peek() + 2, buf->peek() + 2 + ulen);
-            const char plen = buf->peek()[2 + ulen];
-            if(buf->readableBytes() < 2 + ulen + 1 + plen) {
-                return;
-            }
-            string recv_pswd(buf->peek() + 2 + ulen + 1, buf->peek() + 2 + ulen + 1 + plen);
-            buf->retrieve(1 + 1 + ulen + 1 + plen);
-            if(authenticate(uname, recv_pswd)) {
-                char res[] = { '\x01', '\x00' };    // success
-                conn->send(res, 2);
-                it->second = WCMD;
-            } else {
-                char res[] = { '\x01', '\x01' };    // failed
-                conn->send(res, 2);
-                LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name()
-                         << " - invalid username / password: " << uname << " / " << recv_pswd;
-                buf->retrieveAll();
-                // conn->shutdown();                // wait for source close, retrieve is necessary
-            }
-        } 
-            break;
-        case WHITE_LIST:
-        {
-            LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - whitelist validation";
-            return;
-        }
-        default:
-            LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - validate with no auth";
-            return;
+    LOG_DEBUG << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - validate with dynamic password";
+    if(buf->readableBytes() < 2) {
+        return;
+    }
+    const char ver = buf->peek()[0];
+    const char ulen = buf->peek()[1];
+    if(buf->readableBytes() < 2 + ulen) {
+        return;
+    }
+    string uname(buf->peek() + 2, buf->peek() + 2 + ulen);
+    const char plen = buf->peek()[2 + ulen];
+    if(buf->readableBytes() < 2 + ulen + 1 + plen) {
+        return;
+    }
+    string recv_pswd(buf->peek() + 2 + ulen + 1, buf->peek() + 2 + ulen + 1 + plen);
+    buf->retrieve(1 + 1 + ulen + 1 + plen);
+    if(authenticate(uname, recv_pswd)) {
+        char res[] = { '\x01', '\x00' };    // success
+        conn->send(res, 2);
+        it->second = WCMD;
+    } else {
+        char res[] = { '\x01', '\x01' };    // failed
+        conn->send(res, 2);
+        LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name()
+                    << " - invalid username / password: " << uname << " / " << recv_pswd;
+        buf->retrieveAll();
+        // conn->shutdown();                // wait for source close, retrieve is necessary
     }
 }
 
@@ -278,7 +239,6 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                     rep.initGeneralResponse('\x07');
                     conn->send(rep.responseData(), rep.responseSize());
                     buf->retrieveAll();
-                    // conn->shutdown();    // retrieve is necessary
                 }
                 default:
                 {
@@ -287,7 +247,6 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                     rep.initGeneralResponse('\x07');
                     conn->send(rep.responseData(), rep.responseSize());
                     buf->retrieveAll();
-                    // conn->shutdown();    // retrieve is necessary
                 }
             }
         }
@@ -299,7 +258,6 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
             rep.initGeneralResponse('\x07');
             conn->send(rep.responseData(), rep.responseSize());
             buf->retrieveAll();
-            // conn->shutdown();    // retrieve is necessary
         }
             break;
         case '\x03':    //CMD: UDP_ASSOCIATE
@@ -309,7 +267,6 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
             rep.initGeneralResponse('\x07');
             conn->send(rep.responseData(), rep.responseSize());
             buf->retrieveAll();
-            // conn->shutdown();    // retrieve is nececssary
         }
             break;
         default:
@@ -318,7 +275,6 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
             rep.initGeneralResponse('\x07');
             conn->send(rep.responseData(), rep.responseSize());
             buf->retrieveAll();
-            // conn->shutdown();    // retrieve is necessary
     }
 }
 
@@ -352,10 +308,4 @@ void SocksServer::handleESTABL(const TcpConnectionPtr &conn, muduo::net::Buffer 
         const auto &destinationConn = boost::any_cast<const TcpConnectionPtr &>(conn->getContext());
         destinationConn->send(buf);
     } 
-    // else if(failed_counts_[conn->name()]++ > 2) {
-    //     LOG_ERROR << conn->peerAddress().toIpPort()  << "->" << conn->name() 
-    //               << " - failed to connect to destination";
-    //     buf->retrieveAll();
-    //     conn->shutdown();
-    // }
 }

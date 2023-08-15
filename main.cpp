@@ -27,7 +27,7 @@ int main(int argc, char *argv[])
     }
     EventLoop loop;
     InetAddress addr(ip, port);
-    SocksServer socksServer(&loop, addr, SocksServer::DYNAMIC_PSWD);
+    SocksServer socksServer(&loop, addr);
     EncodeServer encodeServer(&loop, InetAddress(ip, 6011));
     socksServer.start();
     encodeServer.start();

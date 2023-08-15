@@ -13,11 +13,8 @@
 
 class SocksServer : muduo::noncopyable {
 public:
-    enum ValidationMode {
-        NONE, DYNAMIC_PSWD, WHITE_LIST
-    };
-    SocksServer(muduo::net::EventLoop *loop, const muduo::net::InetAddress &listenAddr, ValidationMode validate_mode=NONE)
-        : server_(loop, listenAddr, "SocksServer"), loop_(loop), validate_mode_(validate_mode), resolver_(loop)
+    SocksServer(muduo::net::EventLoop *loop, const muduo::net::InetAddress &listenAddr)
+        : server_(loop, listenAddr, "SocksServer"), loop_(loop), resolver_(loop)
     {
         server_.setConnectionCallback([this] (const auto &conn) {
             onConnection(conn);
@@ -38,8 +35,6 @@ private:
     cdns::Resolver resolver_;
     std::map<std::string, TunnelPtr> tunnels_;
     std::map<std::string, Status> status_;
-    // std::map<std::string, int> failed_counts_;
-    ValidationMode validate_mode_;
 
     void handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
     void handleWVLDT(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
