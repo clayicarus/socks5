@@ -95,9 +95,9 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
     // only for passsword auth
     if(std::find(mthd, mthd + len, '\x02') != mthd + len) {
         // available auth response, don't send it until validate successfully
-        // char response[] = "V\x02";
-        // response[0] = ver;
-        // conn->send(response, 2);
+        // send response for standard socks5
+        char response[] { ver, '\x02' };
+        conn->send(response, 2);
         it->second = WVLDT;
     } else {
         // response to invalid method, but won't send it
@@ -130,7 +130,8 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
     buf->retrieve(1 + 1 + ulen + 1 + plen);
     if(authenticate(uname, recv_pswd)) {
         // success including WREQ's response
-        char res[] = { '\x05', '\x02', '\x01', '\x00' };    
+        // char res[] = { '\x05', '\x02', '\x01', '\x00' };
+        char res[] = { '\x01', '\x00' };    
         conn->send(res, sizeof(res) / sizeof(char));
         it->second = WCMD;
     } else {
