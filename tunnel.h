@@ -5,8 +5,6 @@
 #ifndef PROXY_TUNNEL_H
 #define PROXY_TUNNEL_H
 
-#define NOT_OUTPUT
-
 #include <muduo/base/Logging.h>
 #include <muduo/net/EventLoop.h>
 #include <muduo/net/InetAddress.h>
@@ -28,12 +26,12 @@ public:
     //   had_connected_(false), 
       timeoutTimer_()
     {
-        LOG_INFO << "Tunnel-" << this << " " << src_conn->peerAddress().toIpPort()
+        LOG_DEBUG << "Tunnel-" << this << " " << src_conn->peerAddress().toIpPort()
                  << " <-> " << destination.toIpPort();
     }
     ~Tunnel()
     {
-        LOG_INFO << "~Tunnel-" << this;
+        LOG_DEBUG << "~Tunnel-" << this;
     }
 
     void setup()
@@ -154,7 +152,7 @@ private:
     {
         using std::placeholders::_1;
 
-        LOG_INFO << "Tunnel-"<< this
+        LOG_DEBUG << "Tunnel-"<< this
                  << (which == kServer ? "server" : "client")
                  << " onHighWaterMark " << conn->name()
                  << " bytes " << bytesToSent;
@@ -187,7 +185,7 @@ private:
 
     void onWriteComplete(ServerClient which, const muduo::net::TcpConnectionPtr &conn)  // continue to send
     {
-        LOG_INFO << "Tunnel-"<< this 
+        LOG_DEBUG << "Tunnel-"<< this 
                  << (which == kServer ? "server" : "client")
                  << " onWriteComplete " << conn->name();
         if(which == kServer) {  // sent to destination(server) yet, source output buffer not full
