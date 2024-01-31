@@ -1,6 +1,10 @@
 # socks5
 socks5 proxy server use muduo
 
+socks5 is a networking protocol used for proxy forwarding between a client and server. It allows clients to transmit network traffic through a proxy server to hide their real IP address, bypass firewalls, or protect their privacy.
+
+Muduo is a C++-based networking library that provides high-performance non-blocking I/O and multi-threaded programming functionality. The library is based on an event-driven design pattern, making it easy for developers to build high-performance network applications.
+
 # usage
 socks5 \<listen port\>
 
