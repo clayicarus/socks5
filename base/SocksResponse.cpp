@@ -22,14 +22,13 @@ void SocksResponse::initSuccessResponse(const in_addr &ipv4_addr, uint16_t port)
 
 void SocksResponse::initSuccessResponse(const std::string &domain_name, uint16_t port)
 {
-    response_.assign("\x05");       // VER
-    response_.push_back('\x00');    // REP
-    response_.push_back('\x00');    // RSV
-    response_.push_back('\x03');        // atyp domain name
+    // VER REP RSV ATYP
+    response_.assign({ '\x05', '\x00', '\x00', '\x03' });
     char len = static_cast<char>(domain_name.size());   // ?
     response_.push_back(len);
     response_ += domain_name;
-    char temp[sizeof port];
+    port = htons(port);
+    char temp[sizeof(port)];
     memcpy(temp, &port, sizeof port);
     response_ += std::string(temp, temp + sizeof(temp));
     valid_ = true;

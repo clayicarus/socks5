@@ -5,10 +5,13 @@
 #ifndef SOCKS5_SOCKSSERVER_H
 #define SOCKS5_SOCKSSERVER_H
 
+#include <cstdint>
 #include <map>
 #include <muduo/net/TcpServer.h>
 #include <string>
+#include "muduo/base/Logging.h"
 #include "muduo/cdns/Resolver.h"
+#include "muduo/net/InetAddress.h"
 #include "tunnel.h"
 
 class SocksServer : muduo::noncopyable {
@@ -23,10 +26,27 @@ public:
             onMessage(conn, buf, time);
         });
     }
-    void start() { server_.start(); }
+    void setAssociationAddr(const std::string &name, uint16_t port) 
+    {
+        LOG_INFO << "Association address " << name << ":" << port;
+        associationName_ = name;
+        associationPort_ = port;
+    }
+    void start() 
+    { 
+        LOG_INFO << "SOCKS5 server start on " << server_.ipPort();
+        server_.start(); 
+    }
+private:
     void onConnection(const muduo::net::TcpConnectionPtr &conn);
     void onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp);
-private:
+    void handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
+    void handleWVLDT(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
+    void handleWCMD(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
+    void handleESTABL(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
+    void onResolved(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf,
+                    const muduo::net::InetAddress &addr);
+
     enum Status {
         WREQ, WVLDT, WCMD, RESOLVING, ESTABL
     };
@@ -36,12 +56,8 @@ private:
     std::map<std::string, TunnelPtr> tunnels_;
     std::map<std::string, Status> status_;
 
-    void handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
-    void handleWVLDT(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
-    void handleWCMD(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
-    void handleESTABL(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
-    void onResolved(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf,
-                    const muduo::net::InetAddress &addr);
+    std::string associationName_;
+    uint16_t associationPort_;
 };
 
 

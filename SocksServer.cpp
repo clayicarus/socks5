@@ -3,10 +3,14 @@
 //
 
 #include "SocksServer.h"
+#include "base/SocksUtils.h"
 #include "base/Utils.h"
 #include "base/SocksResponse.h"
 #include "muduo/base/Logging.h"
+#include "muduo/base/Types.h"
 #include "muduo/net/InetAddress.h"
+#include <algorithm>
+#include <netinet/in.h>
 #include <string>
 using namespace muduo;
 using namespace muduo::net;
@@ -95,9 +99,9 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
     // only for passsword auth
     if(std::find(mthd, mthd + len, '\x02') != mthd + len) {
         // available auth response, don't send it until validate successfully
-        // char response[] = "V\x02";
-        // response[0] = ver;
-        // conn->send(response, 2);
+        // send response for standard socks5
+        char response[] { ver, '\x02' };
+        conn->send(response, 2);
         it->second = WVLDT;
     } else {
         // response to invalid method, but won't send it
@@ -130,7 +134,8 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
     buf->retrieve(1 + 1 + ulen + 1 + plen);
     if(authenticate(uname, recv_pswd)) {
         // success including WREQ's response
-        char res[] = { '\x05', '\x02', '\x01', '\x00' };    
+        // char res[] = { '\x05', '\x02', '\x01', '\x00' };
+        char res[] = { '\x01', '\x00' };    
         conn->send(res, sizeof(res) / sizeof(char));
         it->second = WCMD;
     } else {
@@ -176,6 +181,7 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
             switch (atyp) {
                 case '\x01':    // ATYP: ipv4
                 {
+                    // VER CMD RSV ATYP(4) DST.ADDR(4) DST.PORT(2)
                     if(buf->readableBytes() < 4 + 4 + 2) {
                         return;
                     }
@@ -243,6 +249,7 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                     conn->send(rep.responseData(), rep.responseSize());
                     buf->retrieveAll();
                 }
+                    break;
                 default:
                 {
                     LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - invalid ATYP";
@@ -265,19 +272,43 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
             break;
         case '\x03':    //CMD: UDP_ASSOCIATE
         {
-            LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CMD-UDP_ASSOCIATE";
+            LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CMD-UDP_ASSOCIATE";
+            auto p = buf->peek() + 3;
+            switch (testSocksAddressType(p++, buf->readableBytes())) {
+                case SocksAddressType::INCOMPLETED: 
+                    return;
+                case SocksAddressType::IPv4:
+                    LOG_INFO << "UDP Associate ipv4 to " << parseSocksIPv4Port(p).toIpPort();
+                    break;
+                case SocksAddressType::IPv6:
+                    LOG_INFO << "UDP Associate ipv6 to " << parseSocksIPv6Port(p).toIpPort();
+                    break;
+                case SocksAddressType::DOMAIN_NAME:
+                    LOG_INFO << "UDP Associate domainName to " << parseSocksDomainNamePort(p);
+                    break;
+                case SocksAddressType::INVALID: 
+                {
+                    LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " UDP Associate: Invalid address";
+                    SocksResponse rep;
+                    rep.initGeneralResponse('\x07');
+                    conn->send(rep.responseData(), rep.responseSize());
+                    buf->retrieveAll();
+                }
+                    return;
+            }
             SocksResponse rep;
-            rep.initGeneralResponse('\x07');
+            rep.initSuccessResponse(associationName_, associationPort_);
             conn->send(rep.responseData(), rep.responseSize());
             buf->retrieveAll();
         }
             break;
         default:
-            LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - unknown CMD";
+            LOG_WARN << conn->peerAddress().toIpPort() << "->" << conn->name() << " - onMessage - unknown CMD";
             SocksResponse rep;
             rep.initGeneralResponse('\x07');
             conn->send(rep.responseData(), rep.responseSize());
             buf->retrieveAll();
+            return;
     }
 }
 

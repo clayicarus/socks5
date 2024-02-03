@@ -12,7 +12,8 @@ set(SOURCE_FILE
         EncodeServer.cpp
         base/MD5Encode.cpp
         base/SocksResponse.cpp
-        base/Utils.cpp)
+        base/Utils.cpp
+        base/SocksUtils.cpp)
 set(LINK_LIST
         muduo_cdns cares muduo_net muduo_base pthread)
 
