@@ -9,15 +9,15 @@
 #include <map>
 #include <muduo/net/TcpServer.h>
 #include <string>
+#include "base/SocksResponse.h"
 #include "muduo/base/Logging.h"
-#include "muduo/cdns/Resolver.h"
 #include "muduo/net/InetAddress.h"
 #include "tunnel.h"
 
 class SocksServer : muduo::noncopyable {
 public:
     SocksServer(muduo::net::EventLoop *loop, const muduo::net::InetAddress &listenAddr)
-        : server_(loop, listenAddr, "SocksServer"), loop_(loop), resolver_(loop)
+        : server_(loop, listenAddr, "SocksServer"), loop_(loop), skipLocal_(true)
     {
         server_.setConnectionCallback([this] (const auto &conn) {
             onConnection(conn);
@@ -32,6 +32,8 @@ public:
         associationName_ = name;
         associationPort_ = port;
     }
+    bool isSkipLocal() const { return skipLocal_; }
+    void skipLocal(bool skip=true) { skipLocal_ = skip; }
     void start() 
     { 
         LOG_INFO << "SOCKS5 server start on " << server_.ipPort();
@@ -44,20 +46,27 @@ private:
     void handleWVLDT(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
     void handleWCMD(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
     void handleESTABL(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
-    void onResolved(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf,
-                    const muduo::net::InetAddress &addr);
+
+    static inline void shutdownSocksReq(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf)
+    {
+        SocksResponse rep;
+        rep.initGeneralResponse('\x07');
+        conn->send(rep.responseData(), rep.responseSize());
+        buf->retrieveAll();
+    }
 
     enum Status {
-        WREQ, WVLDT, WCMD, RESOLVING, ESTABL
+        WREQ, WVLDT, WCMD, ESTABL
     };
     muduo::net::TcpServer server_;
     muduo::net::EventLoop *loop_;
-    cdns::Resolver resolver_;
     std::map<std::string, TunnelPtr> tunnels_;
     std::map<std::string, Status> status_;
 
     std::string associationName_;
     uint16_t associationPort_;
+
+    bool skipLocal_;
 };
 
 

@@ -7,11 +7,16 @@
 #include "base/ValidateUtils.h"
 #include "base/SocksResponse.h"
 #include "muduo/base/Logging.h"
+#include "muduo/base/Timestamp.h"
 #include "muduo/base/Types.h"
+#include "muduo/net/Buffer.h"
+#include "muduo/net/Callbacks.h"
 #include "muduo/net/InetAddress.h"
 #include <algorithm>
+#include <cassert>
 #include <netinet/in.h>
 #include <string>
+#include <sys/socket.h>
 using namespace muduo;
 using namespace muduo::net;
 
@@ -50,24 +55,21 @@ void SocksServer::onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net
         switch(status) {
             case WREQ:
                 handleWREQ(conn, buf, time);
-                if(buf->readableBytes() == 0) {
+                if(buf->readableBytes() == 0 || status_.at(conn->name()) != WVLDT) {
                     break;
                 }
             case WVLDT:
                 handleWVLDT(conn, buf, time);
-                if(buf->readableBytes() == 0) {
+                if(buf->readableBytes() == 0 || status_.at(conn->name()) != WCMD) {
                     break;
                 }
             case WCMD:
                 handleWCMD(conn, buf, time);
-                if(buf->readableBytes() == 0) {
+                if(buf->readableBytes() == 0 || status_.at(conn->name()) != ESTABL) {
                     break;
                 }
             case ESTABL:
                 handleESTABL(conn, buf, time);
-                break;
-            case RESOLVING:
-                LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - recv messages when resolving";
                 break;
         }
     }
@@ -149,15 +151,6 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
     }
 }
 
-bool isValidIP(const InetAddress &addr)
-{
-    auto ip_prefix = addr.toIp().substr(0, addr.toIp().find('.'));
-    if(ip_prefix == "0" || ip_prefix == "127" || ip_prefix == "192") {
-        return false;
-    }
-    return true;
-}
-
 void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time)
 {
     LOG_DEBUG << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - status WCMD";
@@ -166,7 +159,6 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
     }
     const char ver = buf->peek()[0];
     const char cmd = buf->peek()[1];
-    const char atyp = buf->peek()[3];
     if(ver != '\x05') {
         // teardown
         LOG_ERROR << conn->peerAddress().toIpPort()  << "->" << conn->name() 
@@ -178,97 +170,88 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
     switch (cmd) {
         case '\x01':    // CMD: CONNECT
         {
+            auto p = buf->peek() + 3;
+            auto addr = p + 1;
+            auto atyp = testSocksAddressType(p, buf->readableBytes());
+            std::string hostname {};
+            InetAddress dst_addr {};
             switch (atyp) {
-                case '\x01':    // ATYP: ipv4
-                {
-                    // VER CMD RSV ATYP(4) DST.ADDR(4) DST.PORT(2)
-                    if(buf->readableBytes() < 4 + 4 + 2) {
+                case SocksAddressType::INCOMPLETED:
+                    return;
+                case SocksAddressType::IPv4:
+                    dst_addr = parseSocksIPv4Port(addr);
+                    if (skipLocal_ && isLocalIP(dst_addr)) {
+                        LOG_WARN << conn->name() << " CONNECT to local address " << dst_addr.toIpPort();
+                        shutdownSocksReq(conn, buf);
                         return;
                     }
-                    //FIXME
-                    const void *ip = buf->peek() + 4;
-                    const void *port = buf->peek() + 4 + 4;
-                    // use buf and retrieve buf
-                    sockaddr_in sock_addr;
-                    memZero(&sock_addr, sizeof(sock_addr));
-                    sock_addr.sin_family = AF_INET;
-                    sock_addr.sin_addr.s_addr = *static_cast<const uint32_t *>(ip);
-                    sock_addr.sin_port = *static_cast<const uint16_t *>(port);
-                    buf->retrieve(4 + 4 + 2);
-                    // setup tunnel to destination
-                    InetAddress dst_addr(sock_addr);
-                    if (!isValidIP(dst_addr)) {
-                        LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - request to invalid address " << dst_addr.toIpPort();
-                        SocksResponse response;
-                        response.initFailedResponse(dst_addr.toIp(), dst_addr.port());
-                        conn->send(response.responseData(), response.responseSize());
-                        buf->retrieveAll();
-                        return;
-                    }
-                    LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CONNECT to " << dst_addr.toIpPort();
-                    TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, dst_addr, conn);
-                    tunnel->setup();
-                    tunnel->connect();
-                    tunnels_[conn->name()] = tunnel; // is necessary
-                    SocksResponse response;
-                    status_[conn->name()] = ESTABL;
-                    // send response
-                    response.initSuccessResponse(sock_addr.sin_addr, sock_addr.sin_port);
-                    conn->send(response.responseData(), response.responseSize());
-                }
+                    LOG_INFO << conn->name() << " CONNECT to IPv4 " << dst_addr.toIpPort();
                     break;
-                case '\x03':    // ATYP: domain_name
-                {
-                    if(buf->readableBytes() <= 4) {
-                        return;
-                    }
-                    const char len = buf->peek()[4];
-                    if(buf->readableBytes() < 5 + len + 2) {
-                        return;
-                    }
-                    const std::string hostname(buf->peek() + 5, buf->peek() + 5 + len);
-                    const void *pport = buf->peek() + 5 + len;
-                    uint16_t port = *static_cast<const uint16_t *>(pport);  // network endian
-                    buf->retrieve(5 + len + 2);
-                    LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CONNECT to " << hostname << ":" << ntohs(port);
-                    status_[conn->name()] = RESOLVING;
-                    resolver_.resolve(hostname, [this, conn, buf, time, hostname, port](const InetAddress &addr){
-                        // FIXME if conn dtor before resolved
-                        InetAddress des{addr.toIp(), ntohs(port)};
-                        LOG_DEBUG << conn->peerAddress().toIpPort()  << "->" << conn->name() 
-                                 << " - onMessage - " << hostname << " parsed as " << des.toIpPort();
-                        onResolved(conn, buf, des);
-                    });
-                }
+                case SocksAddressType::IPv6:
+                    LOG_INFO << conn->name() << " CONNECT to IPv6 " << parseSocksIPv6Port(addr).toIpPort();
                     break;
-                case '\x04':    // ATYP: ipv6
-                {
-                    LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CONNECT by ipv6";
-                    SocksResponse rep;
-                    rep.initGeneralResponse('\x07');
-                    conn->send(rep.responseData(), rep.responseSize());
-                    buf->retrieveAll();
-                }
+                case SocksAddressType::DOMAIN_NAME:
+                    LOG_INFO << conn->name() << " CONNECT to " << parseSocksDomainNamePort(addr);
+                    hostname = parseSocksDomainName(addr);
                     break;
-                default:
-                {
-                    LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - invalid ATYP";
-                    SocksResponse rep;
-                    rep.initGeneralResponse('\x07');
-                    conn->send(rep.responseData(), rep.responseSize());
-                    buf->retrieveAll();
-                }
+                case SocksAddressType::INVALID:
+                    LOG_ERROR << conn->name() << " CONNECT: invalid ATYP";
+                    shutdownSocksReq(conn, buf);
+                    return;
             }
+            parseSocksToInetAddress(loop_, p, 
+            [conn, buf, this, hostname, atyp, time](const InetAddress &dst_addr){
+                if (skipLocal_ && isLocalIP(dst_addr)) {
+                    LOG_WARN << conn->name() << " CONNECT: resolved to local address " << dst_addr.toIpPort();
+                    shutdownSocksReq(conn, buf);
+                    return;
+                }
+                LOG_INFO << conn->name() << " connect to resolved " << dst_addr.toIpPort();
+                TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, dst_addr, conn);
+                tunnel->setup();
+                tunnel->connect();
+                tunnels_[conn->name()] = tunnel; // is necessary
+                status_[conn->name()] = ESTABL;
+                SocksResponse response {};
+                switch (atyp) {
+                    case SocksAddressType::IPv4:
+                    {
+                        in_addr addr_4 {};
+                        addr_4.s_addr = dst_addr.ipv4NetEndian();
+                        response.initSuccessResponse(addr_4, dst_addr.portNetEndian());
+                        buf->retrieve(4 + 4 + 2);
+                    }
+                        break;
+                    case SocksAddressType::DOMAIN_NAME:
+                        response.initSuccessResponse(hostname, dst_addr.port());
+                        buf->retrieve(4 + 1 + hostname.size() + 2);
+                        break;
+                    case SocksAddressType::IPv6:
+                    {
+                        in6_addr addr_6 {};
+                        addr_6 = reinterpret_cast<const sockaddr_in6*>(dst_addr.getSockAddr())->sin6_addr;
+                        response.initSuccessResponse(addr_6, dst_addr.portNetEndian());
+                        buf->retrieve(4 + 16 + 2);
+                    }
+                        break;
+                    case SocksAddressType::INCOMPLETED:
+                    case SocksAddressType::INVALID:
+                        LOG_FATAL << "CONNECT: invalid ATYP";
+                }
+                conn->send(response.responseData(), response.responseSize());
+                if (buf->readableBytes() > 0) {
+                    handleESTABL(conn, buf, time);
+                }
+            }, 
+            [hostname, &conn, buf]{
+                LOG_ERROR << hostname << " resolve failed";
+                shutdownSocksReq(conn, buf);
+            });
         }
             break;
         case '\x02':    // CMD: BIND
-        {
             LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CMD-BIND";
-            SocksResponse rep;
-            rep.initGeneralResponse('\x07');
-            conn->send(rep.responseData(), rep.responseSize());
-            buf->retrieveAll();
-        }
+            shutdownSocksReq(conn, buf);
             break;
         case '\x03':    //CMD: UDP_ASSOCIATE
         {
@@ -287,13 +270,7 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                     LOG_INFO << "UDP Associate domainName to " << parseSocksDomainNamePort(p);
                     break;
                 case SocksAddressType::INVALID: 
-                {
-                    LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " UDP Associate: Invalid address";
-                    SocksResponse rep;
-                    rep.initGeneralResponse('\x07');
-                    conn->send(rep.responseData(), rep.responseSize());
-                    buf->retrieveAll();
-                }
+                    shutdownSocksReq(conn, buf);
                     return;
             }
             SocksResponse rep;
@@ -304,34 +281,8 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
             break;
         default:
             LOG_WARN << conn->peerAddress().toIpPort() << "->" << conn->name() << " - onMessage - unknown CMD";
-            SocksResponse rep;
-            rep.initGeneralResponse('\x07');
-            conn->send(rep.responseData(), rep.responseSize());
-            buf->retrieveAll();
+            shutdownSocksReq(conn, buf);
             return;
-    }
-}
-
-void SocksServer::onResolved(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, const muduo::net::InetAddress &addr)
-{
-    SocksResponse response;
-    // FIXME: more effective way to judge if resolve failed
-    if (!isValidIP(addr)) {
-        response.initFailedResponse(addr.toIp(), addr.port());
-        conn->send(response.responseData(), response.responseSize());
-        buf->retrieveAll();
-        return;
-    }
-    TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, addr, conn);
-    tunnel->setup();
-    tunnel->connect();
-    tunnels_[conn->name()] = tunnel; // is necessary
-    status_[conn->name()] = ESTABL;
-    // send response
-    response.initSuccessResponse(in_addr {addr.ipv4NetEndian()}, addr.port());
-    conn->send(response.responseData(), response.responseSize());
-    if(buf->readableBytes() > 0) {
-        handleESTABL(conn, buf, Timestamp::now());
     }
 }
 

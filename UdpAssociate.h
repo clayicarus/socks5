@@ -85,7 +85,7 @@ public:
         ::close(ch_->fd()); 
     }
     explicit UdpAssociation(muduo::net::EventLoop *loop, const muduo::net::InetAddress &association_addr): 
-        loop_(loop)
+        loop_(loop), skip_local_address_(true)
     {
         auto fd = ::socket(AF_INET, SOCK_DGRAM, 0);
         if (fd < 0) {
@@ -102,6 +102,8 @@ public:
         ch_->enableReading();
         LOG_INFO << "Association start on " << association_addr.toIpPort();
     }
+    bool isSkipLocal() const { return skip_local_address_; }
+    void skipLocal(bool skip=true) { skip_local_address_ = skip; }
 private:
     void readCallback(muduo::Timestamp timestamp)
     {
@@ -138,6 +140,10 @@ private:
         std::string head(buf_, buf_ + head_len);
         parseSocksToInetAddress(loop_, p, 
         [this, data, data_len, head, from_addr](const auto &dst_addr) {
+            if (skip_local_address_ && isLocalIP(dst_addr)) {
+                LOG_WARN << "ASSOCIATE to local address " << dst_addr.toIpPort();
+                return;
+            }
             auto key = from_addr.toIpPort();
             if (!association_.count(key)) {
                 auto p = association_.insert({ key, std::unique_ptr<UdpTunnel>() });
@@ -162,6 +168,7 @@ private:
     // FIXME: memory leak
     std::map<std::string, Tunnel> association_;
     muduo::net::EventLoop *loop_;
+    bool skip_local_address_;
 };
 
 #endif  // UDP_ASSOCIATE_H
