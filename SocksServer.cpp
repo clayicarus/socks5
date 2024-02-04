@@ -4,7 +4,7 @@
 
 #include "SocksServer.h"
 #include "base/SocksUtils.h"
-#include "base/Utils.h"
+#include "base/ValidateUtils.h"
 #include "base/SocksResponse.h"
 #include "muduo/base/Logging.h"
 #include "muduo/base/Types.h"

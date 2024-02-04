@@ -18,7 +18,7 @@ int main(int argc, char *argv[])
 {
     // Logger::setLogLevel(Logger::DEBUG);
     uint16_t socks_port { 2333 }, association_port { 11451 }, encoder_port { 6011 };
-    std::string association_address { "192.168.0.105" };
+    std::string association_address { "0.0.0.0" };
     if (argc > 4) {
         socks_port = atoi(argv[1]);
         association_address = argv[2];

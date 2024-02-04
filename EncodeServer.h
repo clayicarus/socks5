@@ -6,6 +6,7 @@
 #define SOCKS5_ENCODESERVER_H
 
 
+#include "muduo/base/Logging.h"
 #include <muduo/net/TcpServer.h>
 
 class EncodeServer : muduo::noncopyable {
@@ -20,7 +21,11 @@ public:
             onMessage(conn, buf, time);
         });
     }
-    void start() { server_.start(); }
+    void start() 
+    { 
+        LOG_INFO << "Encode server start on " << server_.ipPort();
+        server_.start(); 
+    }
     void onConnection(const muduo::net::TcpConnectionPtr &conn);
     void onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp);
 private:

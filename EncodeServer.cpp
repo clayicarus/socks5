@@ -4,7 +4,7 @@
 
 #include <muduo/base/Logging.h>
 #include "EncodeServer.h"
-#include "base/Utils.h"
+#include "base/ValidateUtils.h"
 
 void EncodeServer::onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp)
 {
