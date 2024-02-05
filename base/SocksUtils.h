@@ -1,12 +1,19 @@
 #ifndef SOCKS_UTILS_H
 #define SOCKS_UTILS_H
 
+#include "muduo/base/Logging.h"
 #include "muduo/net/EventLoop.h"
 #include "muduo/net/InetAddress.h"
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
+
+#define LOG_DEBUG_CONN LOG_DEBUG << conn->name() << " - "
+#define LOG_INFO_CONN LOG_INFO << conn->name() << " - "
+#define LOG_WARN_CONN LOG_WARN << conn->name() << " - "
+#define LOG_ERROR_CONN LOG_ERROR << conn->name() << " - "
+#define LOG_FATAL_CONN LOG_FATAL << conn->name() << " - "
 
 using SocksAddressParseCallback = std::function<void(const muduo::net::InetAddress &addr)>;
 using SocksAddressParseFailedCallback = std::function<void()>;

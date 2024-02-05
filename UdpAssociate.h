@@ -49,7 +49,6 @@ private:
     }
     void messageCallback(muduo::Timestamp timestamp)
     {
-        LOG_DEBUG << "fd " << ch_->fd() << " readable on " << timestamp.toFormattedString();
         sockaddr_in addr {};
         muduo::memZero(&addr, sizeof(addr));
         socklen_t len { sizeof(addr) };
@@ -100,27 +99,28 @@ public:
             readCallback(timestamp);
         });
         ch_->enableReading();
-        LOG_INFO << "Association start on " << association_addr.toIpPort();
+        LOG_WARN << "Association start on " << association_addr.toIpPort();
     }
     bool isSkipLocal() const { return skip_local_address_; }
     void skipLocal(bool skip=true) { skip_local_address_ = skip; }
 private:
     void readCallback(muduo::Timestamp timestamp)
     {
-        LOG_DEBUG << "Association readable on " << timestamp.toFormattedString();
+        LOG_DEBUG << "Association fd " << ch_->fd() << " readable on " << timestamp.toFormattedString();
         sockaddr_in addr {};
         muduo::memZero(&addr, sizeof(sockaddr_in));
         socklen_t len { sizeof(addr) };
         auto rcv_len = recvfrom(ch_->fd(), buf_, sizeof(buf_), 0, reinterpret_cast<sockaddr*>(&addr), &len);
         muduo::net::InetAddress from_addr(addr);
         if (rcv_len < 0) { 
-            LOG_FATAL << "recvfrom";
+            LOG_FATAL << "Error in recvfrom";
         }
         if (rcv_len <= 4) return;
         // TODO: frag
         if (std::string(buf_, buf_ + 3) != std::string { '\x00', '\x00', '\x00' }) return;
         auto p = buf_ + 3;
         char *data {};
+        std::string domain {};
         switch (testSocksAddressType(p, rcv_len)) {
             case SocksAddressType::IPv4:
             data = p + 1 + 4 + 2;
@@ -129,6 +129,7 @@ private:
             data = p + 1 + 16 + 2;
             break;
             case SocksAddressType::DOMAIN_NAME:
+            domain = parseSocksDomainName(p + 1);
             data = p + 1 + p[1] + 2;
             break;
             case SocksAddressType::INCOMPLETED:
@@ -141,7 +142,7 @@ private:
         parseSocksToInetAddress(loop_, p, 
         [this, data, data_len, head, from_addr](const auto &dst_addr) {
             if (skip_local_address_ && isLocalIP(dst_addr)) {
-                LOG_WARN << "ASSOCIATE to local address " << dst_addr.toIpPort();
+                LOG_ERROR << "ASSOCIATE to local address " << dst_addr.toIpPort();
                 return;
             }
             auto key = from_addr.toIpPort();
@@ -154,12 +155,12 @@ private:
             }
             auto sent_len = association_[key]->send(data, data_len, dst_addr);
             if (sent_len < 0) {
-                LOG_ERROR << "send error";
+                LOG_ERROR << "Error in send";
             }
             LOG_INFO << sent_len << " bytes from " << from_addr.toIpPort() << " associate to " << dst_addr.toIpPort();
         }, 
-        []{
-            LOG_WARN << " parse failed";
+        [domain]{
+            LOG_ERROR << domain << " resolve failed";
         });
     }
 

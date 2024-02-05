@@ -28,7 +28,7 @@ public:
     }
     void setAssociationAddr(const std::string &name, uint16_t port) 
     {
-        LOG_INFO << "Association address " << name << ":" << port;
+        LOG_INFO << "Association address on " << name << ":" << port;
         associationName_ = name;
         associationPort_ = port;
     }
@@ -36,7 +36,8 @@ public:
     void skipLocal(bool skip=true) { skipLocal_ = skip; }
     void start() 
     { 
-        LOG_INFO << "SOCKS5 server start on " << server_.ipPort();
+        LOG_WARN << server_.name() << " start on " << server_.ipPort() 
+                 << " with association on " << associationName_ << ":" << associationPort_;
         server_.start(); 
     }
 private:

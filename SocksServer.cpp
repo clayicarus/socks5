@@ -6,7 +6,6 @@
 #include "base/SocksUtils.h"
 #include "base/ValidateUtils.h"
 #include "base/SocksResponse.h"
-#include "muduo/base/Logging.h"
 #include "muduo/base/Timestamp.h"
 #include "muduo/base/Types.h"
 #include "muduo/net/Buffer.h"
@@ -22,8 +21,9 @@ using namespace muduo::net;
 
 void SocksServer::onConnection(const muduo::net::TcpConnectionPtr &conn)
 {
-    LOG_DEBUG << conn->peerAddress().toIpPort()  << "->" << conn->name() 
-             << (conn->connected() ? " UP" : " DOWN");
+    LOG_INFO_CONN << conn->peerAddress().toIpPort() << "->"
+                  << conn->localAddress().toIpPort() << " is "
+                  << (conn->connected() ? "UP" : "DOWN");
     if(conn->connected()) {
         conn->setTcpNoDelay(true);
         auto it = status_.find(conn->name());
@@ -48,8 +48,7 @@ void SocksServer::onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net
     auto it = status_.find(conn->name());
     if(it == status_.end()) {
         // corpse is speaking
-        LOG_FATAL << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - without status";
-        abort();
+        LOG_FATAL_CONN << "Missing status";
     } else {
         auto status = it->second;
         switch(status) {
@@ -77,7 +76,7 @@ void SocksServer::onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net
 
 void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time)
 {
-    LOG_DEBUG << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - status WREQ";
+    LOG_DEBUG_CONN << "Status WREQ";
     auto it = status_.find(conn->name());
     constexpr size_t headLen = 2;
     if(buf->readableBytes() < headLen) {
@@ -86,8 +85,7 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
     const char ver = buf->peek()[0];
     const char len = buf->peek()[1];
     if(ver != '\x05') {
-        LOG_ERROR << conn->peerAddress().toIpPort()  << "->" << conn->name() 
-                  << " - onMessage - invalid VER";
+        LOG_ERROR_CONN << "Invalid VER";
         buf->retrieveAll();
         conn->shutdown();
         return;
@@ -116,9 +114,9 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
 
 void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time)
 {
-    LOG_DEBUG << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - status WVLDT";
+    LOG_DEBUG_CONN << "Status WVLDT";
     auto it = status_.find(conn->name());
-    LOG_DEBUG << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - validate with dynamic password";
+    LOG_DEBUG_CONN << "Validate with dynamic password";
     if(buf->readableBytes() < 2) {
         return;
     }
@@ -144,8 +142,7 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
         // failed to validate, but won't send response
         // char res[] = { '\x01', '\x01' };    
         // conn->send(res, 2);
-        LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name()
-                    << " - invalid username / password: " << uname << " / " << recv_pswd;
+        LOG_ERROR_CONN << "Invalid username / password - " << uname << " / " << recv_pswd;
         buf->retrieveAll();
         // conn->shutdown();                // wait for source close, retrieve is necessary
     }
@@ -153,7 +150,7 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
 
 void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time)
 {
-    LOG_DEBUG << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - status WCMD";
+    LOG_DEBUG_CONN << "Status WCMD";
     if(buf->readableBytes() < 4) {
         return;
     }
@@ -161,8 +158,7 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
     const char cmd = buf->peek()[1];
     if(ver != '\x05') {
         // teardown
-        LOG_ERROR << conn->peerAddress().toIpPort()  << "->" << conn->name() 
-                  << " - onMessage - invalid VER";
+        LOG_ERROR_CONN << "Invalid VER";
         buf->retrieveAll();
         conn->shutdown();
         return;
@@ -177,36 +173,37 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
             InetAddress dst_addr {};
             switch (atyp) {
                 case SocksAddressType::INCOMPLETED:
+                    LOG_DEBUG_CONN << "Incompleted request head";
                     return;
                 case SocksAddressType::IPv4:
                     dst_addr = parseSocksIPv4Port(addr);
                     if (skipLocal_ && isLocalIP(dst_addr)) {
-                        LOG_WARN << conn->name() << " CONNECT to local address " << dst_addr.toIpPort();
+                        LOG_ERROR_CONN << "CONNECT to local address " << dst_addr.toIpPort();
                         shutdownSocksReq(conn, buf);
                         return;
                     }
-                    LOG_INFO << conn->name() << " CONNECT to IPv4 " << dst_addr.toIpPort();
+                    LOG_WARN_CONN << "CONNECT to IPv4 " << dst_addr.toIpPort();
                     break;
                 case SocksAddressType::IPv6:
-                    LOG_INFO << conn->name() << " CONNECT to IPv6 " << parseSocksIPv6Port(addr).toIpPort();
+                    LOG_WARN_CONN << "CONNECT to IPv6 " << parseSocksIPv6Port(addr).toIpPort();
                     break;
                 case SocksAddressType::DOMAIN_NAME:
-                    LOG_INFO << conn->name() << " CONNECT to " << parseSocksDomainNamePort(addr);
+                    LOG_WARN_CONN << "CONNECT to domain " << parseSocksDomainNamePort(addr);
                     hostname = parseSocksDomainName(addr);
                     break;
                 case SocksAddressType::INVALID:
-                    LOG_ERROR << conn->name() << " CONNECT: invalid ATYP";
+                    LOG_ERROR_CONN << "CONNECT: Invalid ATYP";
                     shutdownSocksReq(conn, buf);
                     return;
             }
             parseSocksToInetAddress(loop_, p, 
             [conn, buf, this, hostname, atyp, time](const InetAddress &dst_addr){
                 if (skipLocal_ && isLocalIP(dst_addr)) {
-                    LOG_WARN << conn->name() << " CONNECT: resolved to local address " << dst_addr.toIpPort();
+                    LOG_ERROR_CONN << "CONNECT: Resolved to local address " << dst_addr.toIpPort();
                     shutdownSocksReq(conn, buf);
                     return;
                 }
-                LOG_INFO << conn->name() << " connect to resolved " << dst_addr.toIpPort();
+                LOG_INFO_CONN << "connect to resolved " << dst_addr.toIpPort();
                 TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, dst_addr, conn);
                 tunnel->setup();
                 tunnel->connect();
@@ -236,38 +233,37 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                         break;
                     case SocksAddressType::INCOMPLETED:
                     case SocksAddressType::INVALID:
-                        LOG_FATAL << "CONNECT: invalid ATYP";
+                        LOG_FATAL_CONN << "CONNECT: Invalid ATYP";
                 }
                 conn->send(response.responseData(), response.responseSize());
                 if (buf->readableBytes() > 0) {
                     handleESTABL(conn, buf, time);
                 }
             }, 
-            [hostname, &conn, buf]{
-                LOG_ERROR << hostname << " resolve failed";
+            [hostname, conn, buf]{
+                LOG_ERROR_CONN << hostname << " resolve failed";
                 shutdownSocksReq(conn, buf);
             });
         }
             break;
         case '\x02':    // CMD: BIND
-            LOG_WARN << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CMD-BIND";
+            LOG_ERROR_CONN << "BIND";
             shutdownSocksReq(conn, buf);
             break;
         case '\x03':    //CMD: UDP_ASSOCIATE
         {
-            LOG_INFO << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - CMD-UDP_ASSOCIATE";
             auto p = buf->peek() + 3;
             switch (testSocksAddressType(p++, buf->readableBytes())) {
                 case SocksAddressType::INCOMPLETED: 
                     return;
                 case SocksAddressType::IPv4:
-                    LOG_INFO << "UDP Associate ipv4 to " << parseSocksIPv4Port(p).toIpPort();
+                    LOG_WARN_CONN << "UDP_ASSOCIATE to IPv4 " << parseSocksIPv4Port(p).toIpPort();
                     break;
                 case SocksAddressType::IPv6:
-                    LOG_INFO << "UDP Associate ipv6 to " << parseSocksIPv6Port(p).toIpPort();
+                    LOG_WARN_CONN << "UDP_ASSOCIATE to IPv6 " << parseSocksIPv6Port(p).toIpPort();
                     break;
                 case SocksAddressType::DOMAIN_NAME:
-                    LOG_INFO << "UDP Associate domainName to " << parseSocksDomainNamePort(p);
+                    LOG_WARN_CONN << "UDP_ASSOCIATE to domain " << parseSocksDomainNamePort(p);
                     break;
                 case SocksAddressType::INVALID: 
                     shutdownSocksReq(conn, buf);
@@ -280,7 +276,7 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
         }
             break;
         default:
-            LOG_WARN << conn->peerAddress().toIpPort() << "->" << conn->name() << " - onMessage - unknown CMD";
+            LOG_ERROR_CONN << "Unknown CMD";
             shutdownSocksReq(conn, buf);
             return;
     }
@@ -288,7 +284,7 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
 
 void SocksServer::handleESTABL(const TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time)
 {
-    LOG_DEBUG << conn->peerAddress().toIpPort()  << "->" << conn->name() << " - onMessage - status ESTABL";
+    LOG_DEBUG_CONN << "Status ESTABL";
     if(!conn->getContext().empty()) {
         const auto &destinationConn = boost::any_cast<const TcpConnectionPtr &>(conn->getContext());
         destinationConn->send(buf);

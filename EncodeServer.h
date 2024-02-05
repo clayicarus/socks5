@@ -23,7 +23,7 @@ public:
     }
     void start() 
     { 
-        LOG_INFO << "Encode server start on " << server_.ipPort();
+        LOG_WARN << server_.name() << " start on " << server_.ipPort();
         server_.start(); 
     }
     void onConnection(const muduo::net::TcpConnectionPtr &conn);
