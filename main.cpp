@@ -10,6 +10,7 @@
 #include "EncodeServer.h"
 #include "UdpAssociate.h"
 #include "muduo/base/Logging.h"
+#include "muduo/cdns/Resolver.h"
 #include "muduo/net/InetAddress.h"
 
 using namespace muduo::net;
@@ -60,12 +61,15 @@ int main(int argc, char *argv[])
         break;
     }
     Logger::setLogLevel(static_cast<Logger::LogLevel>(level));
-    InetAddress socks_address(socks_port), encoder_address(encoder_port), udp_address(association_port);
+    InetAddress socks_address(socks_port), encoder_address(encoder_port), udp_local_address(association_port);
     EventLoop loop;
     SocksServer socksServer(&loop, socks_address);
     EncodeServer encodeServer(&loop, encoder_address);
-    UdpAssociation udpAssociation(&loop, udp_address);
-    socksServer.setAssociationAddr(association_address, udp_address.port());
+    UdpAssociation udpAssociation(&loop, udp_local_address);
+    cdns::Resolver resolver(&loop);
+    resolver.resolve(association_address, [association_port, &socksServer](const InetAddress &association_addr) {
+        socksServer.setAssociationAddr({ association_addr.toIp(), association_port });
+    });
     socksServer.start();
     encodeServer.start();
     loop.loop();

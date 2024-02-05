@@ -5,7 +5,6 @@
 #ifndef SOCKS5_SOCKSSERVER_H
 #define SOCKS5_SOCKSSERVER_H
 
-#include <cstdint>
 #include <map>
 #include <muduo/net/TcpServer.h>
 #include <string>
@@ -26,18 +25,16 @@ public:
             onMessage(conn, buf, time);
         });
     }
-    void setAssociationAddr(const std::string &name, uint16_t port) 
+    void setAssociationAddr(const muduo::net::InetAddress &addr) 
     {
-        LOG_INFO << "Association address on " << name << ":" << port;
-        associationName_ = name;
-        associationPort_ = port;
+        association_addr_ = addr;
+        LOG_WARN << server_.name() << " UDP Association address on " << association_addr_.toIpPort();
     }
     bool isSkipLocal() const { return skipLocal_; }
     void skipLocal(bool skip=true) { skipLocal_ = skip; }
     void start() 
     { 
-        LOG_WARN << server_.name() << " start on " << server_.ipPort() 
-                 << " with association on " << associationName_ << ":" << associationPort_;
+        LOG_WARN << server_.name() << " start on " << server_.ipPort();
         server_.start(); 
     }
 private:
@@ -63,10 +60,7 @@ private:
     muduo::net::EventLoop *loop_;
     std::map<std::string, TunnelPtr> tunnels_;
     std::map<std::string, Status> status_;
-
-    std::string associationName_;
-    uint16_t associationPort_;
-
+    muduo::net::InetAddress association_addr_;
     bool skipLocal_;
 };
 

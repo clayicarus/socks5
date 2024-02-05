@@ -270,7 +270,10 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                     return;
             }
             SocksResponse rep;
-            rep.initSuccessResponse(associationName_, associationPort_);
+            // FIXME: IPv6 or domain name
+            in_addr addr {};
+            addr.s_addr = association_addr_.ipv4NetEndian();
+            rep.initSuccessResponse(addr, association_addr_.portNetEndian());
             conn->send(rep.responseData(), rep.responseSize());
             buf->retrieveAll();
         }
