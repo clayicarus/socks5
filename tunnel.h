@@ -14,7 +14,7 @@
 
 // only in tunnel can get response from destination
 class Tunnel : public std::enable_shared_from_this<Tunnel>, muduo::noncopyable {
-static constexpr size_t kHighMark = 1024 * 1024;
+static constexpr size_t kHighMark = 100 * 1024 * 1024;
 static constexpr double kConnectTimeout = 150;  // unreachable error will throw in about 120 secs
 public:
     Tunnel(muduo::net::EventLoop *loop,
@@ -26,12 +26,12 @@ public:
     //   had_connected_(false), 
       timeoutTimer_()
     {
-        LOG_DEBUG << "Tunnel-" << this << " " << src_conn->peerAddress().toIpPort()
+        LOG_INFO << "Tunnel-" << this << " " << src_conn->peerAddress().toIpPort()
                  << " <-> " << destination.toIpPort();
     }
     ~Tunnel()
     {
-        LOG_DEBUG << "~Tunnel-" << this;
+        LOG_INFO << "~Tunnel-" << this;
     }
 
     void setup()
@@ -108,7 +108,7 @@ private:
         using std::placeholders::_1;
         using std::placeholders::_2;
 
-        LOG_DEBUG << (conn->connected() ? "UP" : "DOWN");
+        LOG_INFO << (conn->connected() ? "UP" : "DOWN");
         if(conn->connected()) { // destination connected
             conn->setTcpNoDelay(true);
             conn->setHighWaterMarkCallback(std::bind(&Tunnel::onHighWaterMarkWeak,
@@ -123,7 +123,7 @@ private:
             loop_->cancel(timeoutTimer_);   // connected successfully
             // had_connected_ = true;
         } else {    // Q3: destination disconnected actively
-            LOG_DEBUG << "Tunnel-" << this << " - destination close";
+            LOG_INFO << "Tunnel-" << this << " - destination close";
             teardown(); // disconnect source conn actively
         }
     }
@@ -152,7 +152,7 @@ private:
     {
         using std::placeholders::_1;
 
-        LOG_DEBUG << "Tunnel-"<< this
+        LOG_INFO << "Tunnel-"<< this
                  << (which == kServer ? "server" : "client")
                  << " onHighWaterMark " << conn->name()
                  << " bytes " << bytesToSent;
@@ -185,7 +185,7 @@ private:
 
     void onWriteComplete(ServerClient which, const muduo::net::TcpConnectionPtr &conn)  // continue to send
     {
-        LOG_DEBUG << "Tunnel-"<< this 
+        LOG_INFO << "Tunnel-"<< this 
                  << (which == kServer ? "server" : "client")
                  << " onWriteComplete " << conn->name();
         if(which == kServer) {  // sent to destination(server) yet, source output buffer not full
