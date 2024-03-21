@@ -85,12 +85,28 @@ inline muduo::net::InetAddress parseSocksIPv6Port(const void *addr)
     return muduo::net::InetAddress(sock_addr);
 }
 
-inline bool isLocalIP(const muduo::net::InetAddress &addr)
+inline bool isLocalIP(const muduo::net::InetAddress& addr)
 {
-    auto ip_prefix = addr.toIp().substr(0, addr.toIp().find('.'));
-    if(ip_prefix == "0" || ip_prefix == "127" || ip_prefix == "192") {
-        return true;
+    std::string ip = addr.toIp();
+
+    // IPV4时候判断是否为本机IP
+    if (ip.find('.') != std::string::npos) {
+        size_t pos = ip.find('.');
+        std::string ip_prefix = ip.substr(0, pos);
+
+        // 判断IPv4 地址是否属于常见的保留地址范围：
+        // 1.如果 IP 地址的前缀部分为 "10"，则判定为本地地址；
+        // 2.如果 IP 地址的前缀部分为 "172"，并且第一个点后的两个数字在 16 到 31 之间，则判定为本地地址。
+        // 3.如果 IP 地址的前缀部分为 "192"，并且第一个点后的三个数字为 "168"，则判定为本地地址
+        if (ip_prefix == "10" ||
+            (ip_prefix == "172" && ip.substr(pos + 1, 2) >= "16" && ip.substr(pos + 1, 2) <= "31") ||
+            (ip_prefix == "192" && ip.substr(pos + 1, 3) == "168")) {
+            return true;
+        }
     }
+
+    // TODO 判断IPV6没写
+
     return false;
 }
 
