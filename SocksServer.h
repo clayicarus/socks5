@@ -16,7 +16,7 @@
 class SocksServer : muduo::noncopyable {
 public:
     SocksServer(muduo::net::EventLoop *loop, const muduo::net::InetAddress &listenAddr)
-        : server_(loop, listenAddr, "SocksServer"), loop_(loop), skipLocal_(true)
+        : server_(loop, listenAddr, "SocksServer"), loop_(loop), skipLocal_(true), tunnelMaxCount_(0), statusMaxCount_(0)
     {
         server_.setConnectionCallback([this] (const auto &conn) {
             onConnection(conn);
@@ -27,8 +27,8 @@ public:
     }
     void setAssociationAddr(const muduo::net::InetAddress &addr) 
     {
-        association_addr_ = addr;
-        LOG_WARN << server_.name() << " UDP Association address on " << association_addr_.toIpPort();
+        associationAddr_ = addr;
+        LOG_WARN << server_.name() << " UDP Association address on " << associationAddr_.toIpPort();
     }
     bool isSkipLocal() const { return skipLocal_; }
     void skipLocal(bool skip=true) { skipLocal_ = skip; }
@@ -60,8 +60,10 @@ private:
     muduo::net::EventLoop *loop_;
     std::map<std::string, TunnelPtr> tunnels_;
     std::map<std::string, Status> status_;
-    muduo::net::InetAddress association_addr_;
+    muduo::net::InetAddress associationAddr_;
     bool skipLocal_;
+    int tunnelMaxCount_;
+    int statusMaxCount_;
 };
 
 

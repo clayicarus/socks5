@@ -21,16 +21,26 @@ using namespace muduo::net;
 
 void SocksServer::onConnection(const muduo::net::TcpConnectionPtr &conn)
 {
+    tunnelMaxCount_ = std::max(tunnelMaxCount_, static_cast<int>(tunnels_.size()));
+    statusMaxCount_ = std::max(statusMaxCount_, static_cast<int>(status_.size()));
     LOG_INFO_CONN << conn->peerAddress().toIpPort() << "->"
                   << conn->localAddress().toIpPort() << " is "
-                  << (conn->connected() ? "UP" : "DOWN");
+                  << (conn->connected() ? "UP" : "DOWN")
+                  << ", current status count: " << status_.size() << ", max: " << statusMaxCount_
+                  << ", current tunnel count: " << tunnels_.size() << ", max: " << tunnelMaxCount_;
     if(conn->connected()) {
+        if (status_.size() >= 64) {
+            LOG_WARN << "too many tunnels, force close " << conn->name(); 
+            conn->forceClose();
+            return;
+        } 
         conn->setTcpNoDelay(true);
         auto it = status_.find(conn->name());
         if(it == status_.end()) {
             status_[conn->name()] = WREQ;
         }
     } else {
+        LOG_INFO_CONN << "source close";
         auto it = tunnels_.find(conn->name());
         if(it != tunnels_.end()) {
             it->second->disconnect();
@@ -105,9 +115,8 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
         it->second = WVLDT;
     } else {
         // response to invalid method, but won't send it
-        // char response[] = "V\xff";
-        // response[0] = ver;
-        // conn->send(response, 2);
+        char response[] = {ver, '\xff'};
+        conn->send(response, sizeof(response));
         buf->retrieveAll();
     }
 }
@@ -134,14 +143,13 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
     buf->retrieve(1 + 1 + ulen + 1 + plen);
     if(authenticate(uname, recv_pswd)) {
         // success including WREQ's response
-        // char res[] = { '\x05', '\x02', '\x01', '\x00' };
         char res[] = { '\x01', '\x00' };    
         conn->send(res, sizeof(res) / sizeof(char));
         it->second = WCMD;
     } else {
         // failed to validate, but won't send response
-        // char res[] = { '\x01', '\x01' };    
-        // conn->send(res, 2);
+        char res[] = { '\x01', '\x01' };    
+        conn->send(res, 2);
         LOG_ERROR_CONN << "Invalid username / password - " << uname << " / " << recv_pswd;
         buf->retrieveAll();
         // conn->shutdown();                // wait for source close, retrieve is necessary
@@ -272,8 +280,8 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
             SocksResponse rep;
             // FIXME: IPv6 or domain name
             in_addr addr {};
-            addr.s_addr = association_addr_.ipv4NetEndian();
-            rep.initSuccessResponse(addr, association_addr_.portNetEndian());
+            addr.s_addr = associationAddr_.ipv4NetEndian();
+            rep.initSuccessResponse(addr, associationAddr_.portNetEndian());
             conn->send(rep.responseData(), rep.responseSize());
             buf->retrieveAll();
         }
