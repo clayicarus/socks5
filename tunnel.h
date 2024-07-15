@@ -10,7 +10,7 @@
 #include <muduo/net/InetAddress.h>
 #include <muduo/net/TcpClient.h>
 #include <muduo/net/TcpServer.h>
-#include "muduo/net/TimerId.h"
+#include "base/SocksUtils.h"
 
 // only in tunnel can get response from destination
 class Tunnel : public std::enable_shared_from_this<Tunnel>, muduo::noncopyable {
@@ -22,9 +22,7 @@ public:
            const muduo::net::TcpConnectionPtr src_conn)
     : loop_(loop), 
       client_(loop, destination, src_conn->name()),
-      serverConn_(src_conn), 
-    //   had_connected_(false), 
-      timeoutTimer_()
+      serverConn_(src_conn)
     {
         LOG_INFO << "Tunnel-" << this << " " << src_conn->peerAddress().toIpPort()
                  << " <-> " << destination.toIpPort();
@@ -38,11 +36,6 @@ public:
     {
         using std::placeholders::_1;
         using std::placeholders::_2;
-        // FIXME: shared_from_this result in ~tunnel failed
-        // client_.setConnectionCallback(std::bind(&Tunnel::onClientConnection/* destination connection */, 
-        //                                             weak_from_this(), _1)); // why shared_from_this() here?
-        // client_.setMessageCallback(std::bind(&Tunnel::onClientMessage,
-        //                                          weak_from_this(), _1, _2, _3));
         auto wk = weak_from_this();
         client_.setConnectionCallback([wk](const auto &conn){
             auto sp = wk.lock();
@@ -64,38 +57,17 @@ public:
     void connect()
     {
         client_.connect();
-        // if ~Tunnel before it run
-        // auto wp = weak_from_this();
-        // timeoutTimer_ = loop_->runAfter(kConnectTimeout, [wp]{
-        //     // weak callback?
-        //     auto sp = wp.lock();
-        //     if(sp && !sp->clientConn_) {
-        //         sp->teardown();
-        //     }
-        // });
     }
 
     void disconnect()
     {
         // how about not connected yet when source close actively?
-        // if(!hadConnected()) {
-            // LOG_WARN << "Tunnel-"<< this <<" never connected yet";
-            // client_.setConnectionCallback(muduo::net::defaultConnectionCallback);
-            // client_.setMessageCallback(muduo::net::defaultMessageCallback);
-        // } 
         client_.disconnect();
     }
-
-    // bool hadConnected() const 
-    // {
-    //     return had_connected_;
-    // }
 
 private:
     void teardown() // src or dest close first
     {
-        // client_.setConnectionCallback(muduo::net::defaultConnectionCallback);
-        // client_.setMessageCallback(muduo::net::defaultMessageCallback);
         if(serverConn_) {   // Q3: disconnect source conn actively when dest close first
             serverConn_->setContext(boost::any());  // Q2 ?
             serverConn_->shutdown();    // how about close source directly ?
@@ -108,7 +80,7 @@ private:
         using std::placeholders::_1;
         using std::placeholders::_2;
 
-        LOG_INFO << (conn->connected() ? "UP" : "DOWN");
+        LOG_INFO_CONN << (conn->connected() ? "UP" : "DOWN");
         if(conn->connected()) { // destination connected
             conn->setTcpNoDelay(true);
             conn->setHighWaterMarkCallback(std::bind(&Tunnel::onHighWaterMarkWeak,
@@ -120,10 +92,9 @@ private:
             if(serverConn_->inputBuffer()->readableBytes() > 0) {   // Q1: not yet connected to destination but got requests from source
                 conn->send(serverConn_->inputBuffer()); // send requests from source to destination
             }
-            loop_->cancel(timeoutTimer_);   // connected successfully
             // had_connected_ = true;
         } else {    // Q3: destination disconnected actively
-            LOG_INFO << "Tunnel-" << this << " - destination close";
+            LOG_INFO_CONN << "destination close";
             teardown(); // disconnect source conn actively
         }
     }
@@ -210,8 +181,6 @@ private:
     muduo::net::TcpClient client_;
     muduo::net::TcpConnectionPtr  serverConn_;  // source
     muduo::net::TcpConnectionPtr clientConn_;   // destination
-    muduo::net::TimerId timeoutTimer_;
-    // bool had_connected_;
 };
 typedef std::shared_ptr<Tunnel> TunnelPtr;
 
