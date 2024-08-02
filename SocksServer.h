@@ -5,18 +5,20 @@
 #ifndef SOCKS5_SOCKSSERVER_H
 #define SOCKS5_SOCKSSERVER_H
 
-#include <map>
+#include <cstddef>
+#include <cstdint>
 #include <muduo/net/TcpServer.h>
-#include <string>
 #include "base/SocksResponse.h"
+#include "base/ConnectionQueue.h"
 #include "muduo/base/Logging.h"
 #include "muduo/net/InetAddress.h"
 #include "tunnel.h"
 
 class SocksServer : muduo::noncopyable {
+    constexpr static std::size_t connMaxNum_ = 1021;
 public:
     SocksServer(muduo::net::EventLoop *loop, const muduo::net::InetAddress &listenAddr)
-        : server_(loop, listenAddr, "SocksServer"), loop_(loop), skipLocal_(true), tunnelMaxCount_(0), statusMaxCount_(0)
+        : server_(loop, listenAddr, "SocksServer"), loop_(loop), skipLocal_(true)
     {
         server_.setConnectionCallback([this] (const auto &conn) {
             onConnection(conn);
@@ -58,8 +60,9 @@ private:
     };
     muduo::net::TcpServer server_;
     muduo::net::EventLoop *loop_;
-    std::map<std::string, TunnelPtr> tunnels_;
-    std::map<std::string, Status> status_;
+    HashMap<int64_t, TunnelPtr, connMaxNum_> tunnels_;
+    HashMap<int64_t, Status, connMaxNum_> status_;
+    ConnectionQueue<int64_t, connMaxNum_, connMaxNum_ * 2> cq_;
     muduo::net::InetAddress associationAddr_;
     bool skipLocal_;
     int tunnelMaxCount_;

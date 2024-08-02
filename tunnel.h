@@ -14,8 +14,7 @@
 
 // only in tunnel can get response from destination
 class Tunnel : public std::enable_shared_from_this<Tunnel>, muduo::noncopyable {
-static constexpr size_t kHighMark = 100 * 1024 * 1024;
-static constexpr double kConnectTimeout = 150;  // unreachable error will throw in about 120 secs
+static constexpr size_t kHighMark = 1024 * 1024;
 public:
     Tunnel(muduo::net::EventLoop *loop,
            const muduo::net::InetAddress &destination,
@@ -70,7 +69,12 @@ private:
     {
         if(serverConn_) {   // Q3: disconnect source conn actively when dest close first
             serverConn_->setContext(boost::any());  // Q2 ?
-            serverConn_->shutdown();    // how about close source directly ?
+            /* forceClose for:
+                1. trigger onConnection to release srcConn immediately then
+                2. ~Tunnel as early as soon and save more fd
+                3. simulate connection close
+             */
+            serverConn_->forceClose();
         }
         clientConn_.reset();    // ~clientConn_ in advance to prevent ~tunnel fail
     }
@@ -109,7 +113,7 @@ private:
             serverConn_->send(buf); // send response from destination to source
         } else {    // source died
             // buf->retrieveAll(); // discard all received data
-            abort();
+            LOG_FATAL_CONN << "rececive data from destination but source died";
         }
     }
 
@@ -123,7 +127,7 @@ private:
     {
         using std::placeholders::_1;
 
-        LOG_INFO << "Tunnel-"<< this
+        LOG_INFO << "Tunnel-" << this << " "
                  << (which == kServer ? "server" : "client")
                  << " onHighWaterMark " << conn->name()
                  << " bytes " << bytesToSent;
@@ -156,7 +160,7 @@ private:
 
     void onWriteComplete(ServerClient which, const muduo::net::TcpConnectionPtr &conn)  // continue to send
     {
-        LOG_INFO << "Tunnel-"<< this 
+        LOG_INFO << "Tunnel-" << this << " "
                  << (which == kServer ? "server" : "client")
                  << " onWriteComplete " << conn->name();
         if(which == kServer) {  // sent to destination(server) yet, source output buffer not full
