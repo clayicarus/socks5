@@ -73,6 +73,7 @@ private:
                 1. trigger onConnection to release srcConn immediately then
                 2. ~Tunnel as early as soon and save more fd
                 3. simulate connection close
+                4. it may fix the bug that dst close but src exist
              */
             serverConn_->forceClose();
         }
