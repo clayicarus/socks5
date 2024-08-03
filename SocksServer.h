@@ -15,10 +15,18 @@
 #include "tunnel.h"
 
 class SocksServer : muduo::noncopyable {
-    constexpr static std::size_t connMaxNum_ = 1021;
+    constexpr static std::size_t connMaxNum_ = 163;
 public:
-    SocksServer(muduo::net::EventLoop *loop, const muduo::net::InetAddress &listenAddr)
-        : server_(loop, listenAddr, "SocksServer"), loop_(loop), skipLocal_(true)
+    SocksServer(muduo::net::EventLoop *loop, const muduo::net::InetAddress &listenAddr) : 
+        server_(loop, listenAddr, "SocksServer"),
+        loop_(loop), 
+        tunnels_(connMaxNum_),
+        status_(connMaxNum_),
+        cq_(connMaxNum_, connMaxNum_ * 2),
+        associationAddr_(),
+        skipLocal_(true),
+        tunnelMaxCount_(0),
+        statusMaxCount_(0)
     {
         server_.setConnectionCallback([this] (const auto &conn) {
             onConnection(conn);
@@ -60,9 +68,9 @@ private:
     };
     muduo::net::TcpServer server_;
     muduo::net::EventLoop *loop_;
-    HashMap<int64_t, TunnelPtr, connMaxNum_> tunnels_;
-    HashMap<int64_t, Status, connMaxNum_> status_;
-    ConnectionQueue<int64_t, connMaxNum_, connMaxNum_ * 2> cq_;
+    HashMap<int64_t, TunnelPtr> tunnels_;
+    HashMap<int64_t, Status> status_;
+    ConnectionQueue<int64_t> cq_;
     muduo::net::InetAddress associationAddr_;
     bool skipLocal_;
     int tunnelMaxCount_;

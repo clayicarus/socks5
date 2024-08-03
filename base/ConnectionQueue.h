@@ -13,7 +13,7 @@
 #include <sys/types.h>
 #include <utility>
 
-template <typename KeyType, typename ValueType, std::size_t max_size, typename Hash = std::hash<KeyType>>
+template <typename KeyType, typename ValueType, typename Hash = std::hash<KeyType>>
 class HashMap {  // copyable, movable
 public:
     using size_type = std::size_t;
@@ -26,9 +26,10 @@ public:
         using reference = value_type&;
         using pointer = std::shared_ptr<value_type>;
 
-        __hashmap_iterator(size_type idx, data_type *data) : 
+        __hashmap_iterator(size_type idx, data_type *data, size_type size) : 
             idx_(idx),
-            data_(data)
+            data_(data),
+            size_(size)
         {
             
         }
@@ -42,7 +43,7 @@ public:
         }
         __hashmap_iterator operator++()  // pre
         {
-            while (++idx_ < max_size) {
+            while (++idx_ < size_) {
                 if (data_[idx_].first != nullptr)
                     break;
             }
@@ -79,11 +80,12 @@ public:
         size_type idx_;
     private:
         data_type *data_;
+        size_type size_;
     };
     using iterator = __hashmap_iterator<KV_Pair, DataType>;
     using const_iterator = __hashmap_iterator<const KV_Pair, const DataType>;
 
-    HashMap() : 
+    explicit HashMap(size_type max_size) : 
         data_(new DataType[max_size]),
         size_(0),
         maxSize_(max_size),
@@ -105,7 +107,7 @@ public:
         delete [] data_;
     }
     HashMap(const HashMap &foo) : 
-        data_(new DataType[max_size]),
+        data_(new DataType[foo.maxSize_]),
         size_(foo.size_),
         maxSize_(foo.maxSize_),
         hash_(foo.hash_)
@@ -130,10 +132,11 @@ public:
         swap(rhs);
         return *this;
     }
-    void swap(HashMap<KeyType, ValueType, max_size, Hash> &rhs) noexcept
+    void swap(HashMap<KeyType, ValueType, Hash> &rhs) noexcept
     {
         std::swap(data_, rhs.data_);
         std::swap(size_, rhs.size_);
+        std::swap(maxSize_, rhs.maxSize_);
     }
 
     size_type size() const { return size_; }
@@ -147,11 +150,11 @@ public:
         for (i = 0; i < maxSize_; ++i) {
             if (data_[i].first) break;
         }
-        return { i, data_ };
+        return { i, data_, maxSize_ };
     }
     iterator end()
     {
-        return { maxSize_, data_ };
+        return { maxSize_, data_, maxSize_ };
     }
     const_iterator begin() const 
     {
@@ -159,11 +162,11 @@ public:
         for (i = 0; i < maxSize_; ++i) {
             if (data_[i].first) break;
         }
-        return { i, data_ };
+        return { i, data_, maxSize_ };
     }
     const_iterator end() const
     {
-        return { maxSize_, data_ };
+        return { maxSize_, data_, maxSize_ };
     }
     const_iterator cbegin() const
     {
@@ -171,18 +174,18 @@ public:
         for (i = 0; i < maxSize_; ++i) {
             if (data_[i].first) break;
         }
-        return { i, data_ };
+        return { i, data_, maxSize_ };
     }
     const_iterator cend() const
     {
-        return { maxSize_, data_ };
+        return { maxSize_, data_, maxSize_ };
     }
 
     iterator find(const KeyType &key)
     {
         auto i = findIdx(key);
         if (i == maxSize_ || !data_[i].first) return end();
-        return { i, data_ };
+        return { i, data_, maxSize_ };
     }
     ValueType &at(const KeyType &key)
     {
@@ -217,11 +220,11 @@ public:
     {
         if (full()) return { end(), false };
         auto i = findIdx(pair.first);
-        if (data_[i].first) return { iterator(i, data_), false };  // refer to element existed
+        if (data_[i].first) return { iterator(i, data_, maxSize_), false };  // refer to element existed
         data_[i].first = new KeyType(pair.first);
         data_[i].second = new ValueType(pair.second);
         ++size_;
-        return { iterator(i, data_), true };
+        return { iterator(i, data_, maxSize_), true };
     }
 
     size_type erase(const KeyType& key)
@@ -280,22 +283,23 @@ private:
     }
     DataType *data_;
     size_type size_;
-    const size_type maxSize_;
+    size_type maxSize_;
     const Hash hash_;
 };
 
 
-template <typename T, std::size_t max_size>
+template <typename T>
 class CircularQueue {  // movable, copyable
     static_assert(std::is_scalar<T>::value, "T must be a scalar type");
-    static constexpr std::size_t capacity = max_size + 1;
 public:
     using iterator = T*;
     using const_iterator = const T*;
     using size_type = std::size_t;
 
-    CircularQueue() :
-        data_(new T[capacity]),
+    explicit CircularQueue(size_type max_size) :
+        capacity_(max_size + 1),
+        maxSize_(max_size),
+        data_(new T[capacity_]),
         begin_(data_),
         end_(data_)
     {
@@ -315,17 +319,19 @@ public:
         swap(rhs);
     }
     CircularQueue(const CircularQueue &rhs) :
-        data_(new T[capacity]),
+        capacity_(rhs.capacity_),
+        maxSize_(rhs.maxSize_),
+        data_(new T[capacity_]),
         begin_(rhs.begin_ - rhs.data_ + data_),
         end_(rhs.end_ - rhs.data_ + data_)
     {
         // std::cout << "copy ctor " << this << " from " << &rhs << std::endl;
-        std::copy(rhs.data_, rhs.data_ + max_size, data_);
+        std::copy(rhs.data_, rhs.data_ + capacity_, data_);
     }
     CircularQueue &operator=(const CircularQueue &rhs)
     {
         // std::cout << "=copy " << &rhs << " to " << this << std::endl;
-        auto t = CircularQueue<T, max_size>(rhs);
+        auto t = CircularQueue<T>(rhs);
         swap(t);
         return *this;
     }
@@ -337,34 +343,37 @@ public:
     }
     void swap(CircularQueue &rhs) noexcept
     {
+        std::swap(capacity_, rhs.capacity_);
+        std::swap(maxSize_, rhs.maxSize_);
         std::swap(data_, rhs.data_);
         std::swap(begin_, rhs.begin_);
         std::swap(end_, rhs.end_);
     }
 
     T &front() { return *begin_; }
-    T &back() { return data_[(end_  - data_ - 1 + capacity) % capacity]; }
+    T &back() { return data_[(end_  - data_ - 1 + capacity_) % capacity_]; }
     const T &front() const { return *begin_; }
-    const T &back() const { return data_[(end_  - data_ - 1 + capacity) % capacity]; }
+    const T &back() const { return data_[(end_  - data_ - 1 + capacity_) % capacity_]; }
 
-    bool full() const { return size() == max_size; }
+    bool full() const { return size() == maxSize_; }
     bool empty() const { return end_ == begin_; }
-    size_type size() const { return (end_ - begin_ + capacity) % capacity; }
+    size_type size() const { return (end_ - begin_ + capacity_) % capacity_; }
+    size_type maxSize() const { return maxSize_; }
     
     void push(T e)
     {
-        if (size() == max_size) {
+        if (size() == maxSize_) {
             throw std::out_of_range("queue is full");
         }
         *end_ = e;
-        end_ = (end_ - data_ + 1) % capacity + data_;
+        end_ = (end_ - data_ + 1) % capacity_ + data_;
     }
     void pop()
     {
         if (empty()) {
             throw std::out_of_range("queue is empty");
         }
-        begin_ = (begin_ - data_ + 1) % capacity + data_;
+        begin_ = (begin_ - data_ + 1) % capacity_ + data_;
     }
     void assign(std::initializer_list<T> ilist)
     {
@@ -378,22 +387,26 @@ public:
         begin_ = data_;
     }
 private:
+    size_type capacity_;
+    size_type maxSize_;
     T *data_;
     iterator begin_;
     iterator end_;
 };
 
-template <typename KeyType, std::size_t size_, std::size_t qSize_>
+template <typename KeyType>
 class ConnectionQueue {  // noncopyable
-    using MapType = HashMap<int64_t, std::weak_ptr<muduo::net::TcpConnection>, size_>;
-    using QueueType = CircularQueue<int64_t, qSize_>;
+    using MapType = HashMap<int64_t, std::weak_ptr<muduo::net::TcpConnection>>;
+    using QueueType = CircularQueue<int64_t>;
 public:
     using ValueType = std::weak_ptr<muduo::net::TcpConnection>;
     using size_type = typename MapType::size_type;
     using iterator = typename MapType::iterator;
     using const_iterator = typename MapType::const_iterator;
 
-    ConnectionQueue()
+    ConnectionQueue(size_type map_size, size_type queue_size) :
+        map_(map_size),
+        q_(queue_size)
     {
 
     }
@@ -410,11 +423,11 @@ public:
     }
     size_type maxSize() const 
     {
-        return size_;
+        return map_.maxSize();
     }
     size_type maxQueueSize() const 
     {
-        return qSize_;
+        return q_.maxSize();
     }
 
     bool empty() const
@@ -502,7 +515,7 @@ public:
     }
     void cleanQueue()
     {
-        KeyType arr[qSize_];
+        KeyType arr[q_.size()];
         size_type i = 0;
         
         while (!q_.empty()) {
