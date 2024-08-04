@@ -48,9 +48,16 @@ public:
                 sp->onClientMessage(conn, buf, time);
             }
         });
-        serverConn_->setHighWaterMarkCallback(std::bind(&Tunnel::onHighWaterMarkWeak, 
-                                              weak_from_this(), kServer, _1, _2),
-                                              kHighMark);
+        serverConn_->setHighWaterMarkCallback(
+            std::bind(
+                &Tunnel::onHighWaterMarkWeak, 
+                weak_from_this(), 
+                kServer, 
+                _1, 
+                _2
+            ),
+            kHighMark
+        );
     }
 
     void connect()
@@ -135,23 +142,34 @@ private:
         if(which == kServer) {  // source output buffer full
             if(serverConn_->outputBuffer()->readableBytes() > 0) {  // sent not yet
                 clientConn_->stopRead();    // stop reading response from destination
-                serverConn_->setWriteCompleteCallback(std::bind(&Tunnel::onWriteCompleteWeak,
-                                                                std::weak_ptr<Tunnel>(shared_from_this()),
-                                                                        kServer, _1));  // continue to send to source when write completely
+                serverConn_->setWriteCompleteCallback(
+                std::bind(
+                    &Tunnel::onWriteCompleteWeak,
+                        weak_from_this(),
+                        kServer, 
+                        _1
+                    )
+                );  // continue to send to source when write completely
             }
             // sent yet
         } else {    // destination output buffer full
             if(clientConn_->outputBuffer()->readableBytes() > 0) {
                 serverConn_->stopRead();
-                clientConn_->setWriteCompleteCallback(std::bind(&Tunnel::onWriteCompleteWeak,
-                                                                std::weak_ptr<Tunnel>(shared_from_this()), kClient, _1));
+                clientConn_->setWriteCompleteCallback(
+                    std::bind(
+                        &Tunnel::onWriteCompleteWeak,
+                        weak_from_this(), 
+                        kClient, 
+                        _1
+                    )
+                );
             }
         }
     }
     static void onHighWaterMarkWeak(const std::weak_ptr<Tunnel> &wkTunnel,
                                     ServerClient which,
                                     const muduo::net::TcpConnectionPtr &conn,
-                                    size_t bytesToSent) // weak callback for when serverConn close but serverConn exist 
+                                    size_t bytesToSent)  // weak callback for when serverConn close but serverConn exist 
     {
         std::shared_ptr<Tunnel> tunnel = wkTunnel.lock();
         if(tunnel) {
@@ -165,8 +183,8 @@ private:
                  << (which == kServer ? "server" : "client")
                  << " onWriteComplete " << conn->name();
         if(which == kServer) {  // sent to destination(server) yet, source output buffer not full
-            clientConn_->startRead();   // start to read from destination
-            serverConn_->setWriteCompleteCallback(muduo::net::WriteCompleteCallback()); // default callback
+            clientConn_->startRead();  // start to read from destination
+            serverConn_->setWriteCompleteCallback(muduo::net::WriteCompleteCallback());  // default callback
         } else {
             serverConn_->startRead();
             clientConn_->setWriteCompleteCallback(muduo::net::WriteCompleteCallback());
@@ -174,7 +192,7 @@ private:
     }
     static void onWriteCompleteWeak(const std::weak_ptr<Tunnel> &wkTunnel,
                                     ServerClient which,
-                                    const muduo::net::TcpConnectionPtr &conn)   // weak callback for what ?
+                                    const muduo::net::TcpConnectionPtr &conn)  // weak callback for what ?
     {
         std::shared_ptr<Tunnel> tunnel = wkTunnel.lock();
         if(tunnel) {

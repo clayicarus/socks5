@@ -25,8 +25,8 @@ public:
         cq_(connMaxNum_, connMaxNum_ * 2),
         associationAddr_(),
         skipLocal_(true),
-        tunnelMaxCount_(0),
-        statusMaxCount_(0)
+        tunnelPeekCount_(0),
+        statusPeekCount_(0)
     {
         server_.setConnectionCallback([this] (const auto &conn) {
             onConnection(conn);
@@ -73,8 +73,8 @@ private:
     ConnectionQueue<int64_t> cq_;
     muduo::net::InetAddress associationAddr_;
     bool skipLocal_;
-    int tunnelMaxCount_;
-    int statusMaxCount_;
+    int tunnelPeekCount_;
+    int statusPeekCount_;
 };
 
 
