@@ -4,15 +4,20 @@
 
 #include "SocksServer.h"
 #include "base/SocksUtils.h"
+#include "base/ConnectionQueue.h"
 #include "base/ValidateUtils.h"
 #include "base/SocksResponse.h"
+#include "muduo/base/Logging.h"
 #include "muduo/base/Timestamp.h"
 #include "muduo/base/Types.h"
 #include "muduo/net/Buffer.h"
 #include "muduo/net/Callbacks.h"
 #include "muduo/net/InetAddress.h"
+#include "muduo/net/TcpConnection.h"
 #include <algorithm>
 #include <cassert>
+// #include <iostream>
+#include <memory>
 #include <netinet/in.h>
 #include <string>
 #include <sys/socket.h>
@@ -21,60 +26,72 @@ using namespace muduo::net;
 
 void SocksServer::onConnection(const muduo::net::TcpConnectionPtr &conn)
 {
-    tunnelMaxCount_ = std::max(tunnelMaxCount_, static_cast<int>(tunnels_.size()));
-    statusMaxCount_ = std::max(statusMaxCount_, static_cast<int>(status_.size()));
-    LOG_INFO_CONN << conn->peerAddress().toIpPort() << "->"
-                  << conn->localAddress().toIpPort() << " is "
-                  << (conn->connected() ? "UP" : "DOWN")
-                  << ", current status count: " << status_.size() << ", max: " << statusMaxCount_
-                  << ", current tunnel count: " << tunnels_.size() << ", max: " << tunnelMaxCount_;
+    tunnelPeekCount_ = std::max(tunnelPeekCount_, static_cast<int>(tunnels_.size()));
+    statusPeekCount_ = std::max(statusPeekCount_, static_cast<int>(status_.size()));
+    auto key = getNumFromConnName(conn->name());
     if(conn->connected()) {
-        if (status_.size() >= 64) {
-            LOG_WARN << "too many tunnels, force close " << conn->name(); 
-            conn->forceClose();
-            return;
-        } 
-        conn->setTcpNoDelay(true);
-        auto it = status_.find(conn->name());
-        if(it == status_.end()) {
-            status_[conn->name()] = WREQ;
+        if (cq_.full()) {
+            auto k = cq_.pop();  // forceClose a conn
+            tunnels_.erase(k);
+            status_.erase(k);
+            LOG_WARN << "too many connections, force close #" << k 
+                     << "; current status count: " << status_.size() << ", peek: " << statusPeekCount_
+                     << "; current tunnel count: " << tunnels_.size() << ", peek: " << tunnelPeekCount_;
         }
+        conn->setTcpNoDelay(true);
+        auto it = status_.find(key);
+        if(it == status_.end()) {
+            status_[key] = WREQ;
+        }
+        cq_[key] = std::weak_ptr<muduo::net::TcpConnection>(conn);
     } else {
         LOG_INFO_CONN << "source close";
-        auto it = tunnels_.find(conn->name());
+        auto it = tunnels_.find(key);
         if(it != tunnels_.end()) {
+            LOG_INFO_CONN << "erase tunnel";
             it->second->disconnect();
             tunnels_.erase(it);
         }
-        auto is = status_.find(conn->name());
+        auto is = status_.find(key);
         if(is != status_.end()) {
+            LOG_INFO_CONN << "erase status";
             status_.erase(is);
         }
+        cq_.erase(key);
     }
+    LOG_INFO_CONN << conn->peerAddress().toIpPort() << "->"
+                  << conn->localAddress().toIpPort() << " is "
+                  << (conn->connected() ? "UP" : "DOWN")
+                  << "; current status count: " << status_.size() << ", peek: " << statusPeekCount_
+                  << "; current tunnel count: " << tunnels_.size() << ", peek: " << tunnelPeekCount_;
 }
 
 void SocksServer::onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time)
 {
-    auto it = status_.find(conn->name());
+    if (!conn->connected()) {
+        return;
+    }
+    auto key = getNumFromConnName(conn->name());
+    auto it = status_.find(key);
     if(it == status_.end()) {
         // corpse is speaking
-        LOG_FATAL_CONN << "Missing status";
+        LOG_FATAL_CONN << "missing status";
     } else {
         auto status = it->second;
         switch(status) {
             case WREQ:
                 handleWREQ(conn, buf, time);
-                if(buf->readableBytes() == 0 || status_.at(conn->name()) != WVLDT) {
+                if(buf->readableBytes() == 0 || status_.at(key) != WVLDT) {
                     break;
                 }
             case WVLDT:
                 handleWVLDT(conn, buf, time);
-                if(buf->readableBytes() == 0 || status_.at(conn->name()) != WCMD) {
+                if(buf->readableBytes() == 0 || status_.at(key) != WCMD) {
                     break;
                 }
             case WCMD:
                 handleWCMD(conn, buf, time);
-                if(buf->readableBytes() == 0 || status_.at(conn->name()) != ESTABL) {
+                if(buf->readableBytes() == 0 || status_.at(key) != ESTABL) {
                     break;
                 }
             case ESTABL:
@@ -86,8 +103,9 @@ void SocksServer::onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net
 
 void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time)
 {
-    LOG_DEBUG_CONN << "Status WREQ";
-    auto it = status_.find(conn->name());
+    LOG_DEBUG_CONN << "status WREQ";
+    auto key = getNumFromConnName(conn->name());
+    auto it = status_.find(key);
     constexpr size_t headLen = 2;
     if(buf->readableBytes() < headLen) {
         return;
@@ -95,7 +113,7 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
     const char ver = buf->peek()[0];
     const char len = buf->peek()[1];
     if(ver != '\x05') {
-        LOG_ERROR_CONN << "Invalid VER";
+        LOG_ERROR_CONN << "invalid VER";
         buf->retrieveAll();
         conn->shutdown();
         return;
@@ -123,9 +141,11 @@ void SocksServer::handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::ne
 
 void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time)
 {
-    LOG_DEBUG_CONN << "Status WVLDT";
-    auto it = status_.find(conn->name());
-    LOG_DEBUG_CONN << "Validate with dynamic password";
+    LOG_DEBUG_CONN << "status WVLDT";
+    auto key = getNumFromConnName(conn->name());
+    auto it = status_.find(key);
+    assert(it != status_.end());
+    LOG_DEBUG_CONN << "validate with dynamic password";
     if(buf->readableBytes() < 2) {
         return;
     }
@@ -150,7 +170,7 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
         // failed to validate, but won't send response
         char res[] = { '\x01', '\x01' };    
         conn->send(res, 2);
-        LOG_ERROR_CONN << "Invalid username / password - " << uname << " / " << recv_pswd;
+        LOG_ERROR_CONN << "invalid username / password - " << uname << " / " << recv_pswd;
         buf->retrieveAll();
         // conn->shutdown();                // wait for source close, retrieve is necessary
     }
@@ -158,7 +178,7 @@ void SocksServer::handleWVLDT(const TcpConnectionPtr &conn, muduo::net::Buffer *
 
 void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time)
 {
-    LOG_DEBUG_CONN << "Status WCMD";
+    LOG_DEBUG_CONN << "status WCMD";
     if(buf->readableBytes() < 4) {
         return;
     }
@@ -166,7 +186,7 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
     const char cmd = buf->peek()[1];
     if(ver != '\x05') {
         // teardown
-        LOG_ERROR_CONN << "Invalid VER";
+        LOG_ERROR_CONN << "invalid VER";
         buf->retrieveAll();
         conn->shutdown();
         return;
@@ -181,7 +201,7 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
             InetAddress dst_addr {};
             switch (atyp) {
                 case SocksAddressType::INCOMPLETED:
-                    LOG_DEBUG_CONN << "Incompleted request head";
+                    LOG_DEBUG_CONN << "incompleted request head";
                     return;
                 case SocksAddressType::IPv4:
                     dst_addr = parseSocksIPv4Port(addr);
@@ -200,23 +220,76 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                     hostname = parseSocksDomainName(addr);
                     break;
                 case SocksAddressType::INVALID:
-                    LOG_ERROR_CONN << "CONNECT: Invalid ATYP";
+                    LOG_ERROR_CONN << "CONNECT: invalid ATYP";
                     shutdownSocksReq(conn, buf);
                     return;
             }
+            auto wk = std::weak_ptr<TcpConnection>(conn);  // in case enlong lifetime
             parseSocksToInetAddress(loop_, p, 
-            [conn, buf, this, hostname, atyp, time](const InetAddress &dst_addr){
+            [wk, buf, this, hostname, atyp, time](const InetAddress &dst_addr){
+                auto conn = wk.lock();
+                if (!conn || !conn->connected()) {
+                    LOG_WARN << hostname << " resolved as " << dst_addr.toIpPort() << " but disconnected already";
+                    return;
+                }
+                auto key = getNumFromConnName(conn->name());
+                // if (!cq_.count(key)) {
+                //     LOG_WARN << "Name resolved as " << dst_addr.toIpPort() << " but disconnected already";
+                //     return;
+                // }
                 if (skipLocal_ && isLocalIP(dst_addr)) {
-                    LOG_ERROR_CONN << "CONNECT: Resolved to local address " << dst_addr.toIpPort();
+                    LOG_ERROR_CONN << "CONNECT: resolved to local address " << dst_addr.toIpPort();
                     shutdownSocksReq(conn, buf);
                     return;
                 }
-                LOG_INFO_CONN << "connect to resolved " << dst_addr.toIpPort();
+                LOG_INFO_CONN << "setup tunnel to resolved " << dst_addr.toIpPort();
                 TunnelPtr tunnel = std::make_shared<Tunnel>(loop_, dst_addr, conn);
                 tunnel->setup();
                 tunnel->connect();
-                tunnels_[conn->name()] = tunnel; // is necessary
-                status_[conn->name()] = ESTABL;
+                // cq_.cleanMap();
+                // cq_.cleanQueue();
+                // if (!(cq_.size() > tunnels_.size())) {
+                //     std::cout << "map: ";
+                //     for (auto &i : cq_.map_) {
+                //         std::cout << i.first << ", ";
+                //     }
+                //     std::cout << std::endl;
+                //     std::cout << "tunnels: ";
+                //     for (auto &i : tunnels_) {
+                //         std::cout << i.first << ", ";
+                //     }
+                //     std::cout << std::endl;
+                //     std::cout << "status: ";
+                //     for (auto &i : status_) {
+                //         std::cout << i.first << ", ";
+                //     }
+                //     std::cout << std::endl;
+                //     LOG_FATAL_CONN << "cq_.size() <= tunnels_.size()";
+                // }
+                tunnels_[key] = tunnel; // is necessary
+                auto it = status_.find(key);
+                // if (it == status_.end()) {
+                //     std::cout << "map: ";
+                //     for (auto &i : cq_.map_) {
+                //         std::cout << i.first << ", ";
+                //     }
+                //     std::cout << std::endl;
+                //     std::cout << "tunnels: ";
+                //     for (auto &i : tunnels_) {
+                //         std::cout << i.first << ", ";
+                //     }
+                //     std::cout << std::endl;
+                //     std::cout << "status: ";
+                //     for (auto &i : status_) {
+                //         std::cout << i.first << ", ";
+                //     }
+                //     std::cout << std::endl;
+                //     LOG_FATAL_CONN << "missing status";
+                // }
+                if (it == status_.end()) {
+                    LOG_FATAL_CONN << "missing status";
+                }
+                it->second = ESTABL;
                 SocksResponse response {};
                 switch (atyp) {
                     case SocksAddressType::IPv4:
@@ -241,14 +314,18 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
                         break;
                     case SocksAddressType::INCOMPLETED:
                     case SocksAddressType::INVALID:
-                        LOG_FATAL_CONN << "CONNECT: Invalid ATYP";
+                        LOG_FATAL_CONN << "CONNECT: invalid ATYP";
                 }
                 conn->send(response.responseData(), response.responseSize());
                 if (buf->readableBytes() > 0) {
                     handleESTABL(conn, buf, time);
                 }
             }, 
-            [hostname, conn, buf]{
+            [wk, hostname, buf]{
+                auto conn = wk.lock();
+                if (!conn) {
+                    return;
+                }
                 LOG_ERROR_CONN << hostname << " resolve failed";
                 shutdownSocksReq(conn, buf);
             });
@@ -287,7 +364,7 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
         }
             break;
         default:
-            LOG_ERROR_CONN << "Unknown CMD";
+            LOG_ERROR_CONN << "unknown CMD";
             shutdownSocksReq(conn, buf);
             return;
     }
@@ -295,7 +372,7 @@ void SocksServer::handleWCMD(const TcpConnectionPtr &conn, muduo::net::Buffer *b
 
 void SocksServer::handleESTABL(const TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time)
 {
-    LOG_DEBUG_CONN << "Status ESTABL";
+    LOG_DEBUG_CONN << "status ESTABL";
     if(!conn->getContext().empty()) {
         const auto &destinationConn = boost::any_cast<const TcpConnectionPtr &>(conn->getContext());
         destinationConn->send(buf);
