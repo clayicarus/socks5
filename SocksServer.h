@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <muduo/net/TcpServer.h>
 #include "base/SocksResponse.h"
 #include "base/ConnectionQueue.h"
@@ -28,10 +29,8 @@ public:
         server_(loop, listenAddr, "SocksServer"),
         loop_(loop), 
         tunnels_(connMaxNum),
-        status_(connMaxNum),
         cq_(connMaxNum, connMaxNum * 2),
         tunnelPeekCount_(0),
-        statusPeekCount_(0),
         associationAddr_(),
         noAuth_(noAuth),
         useDynamicPassword_(useDynamicPassword),
@@ -40,12 +39,12 @@ public:
         skipLocal_(skipLocal),
         highMarkKB_(highMarkKB)
     {
-        server_.setConnectionCallback([this] (const auto &conn) {
-            onConnection(conn);
-        });
-        server_.setMessageCallback([this] (const auto &conn, auto *buf, auto time) {
-            onMessage(conn, buf, time);
-        });
+        using std::placeholders::_1;
+        using std::placeholders::_2;
+        using std::placeholders::_3;
+        
+        server_.setConnectionCallback(std::bind(&SocksServer::onConnection, this, _1));
+        server_.setMessageCallback(std::bind(&SocksServer::onRequestStage, this, _1, _2, _3));
     }
     void setAssociationAddr(const muduo::net::InetAddress &addr) 
     {
@@ -60,11 +59,9 @@ public:
     }
 private:
     void onConnection(const muduo::net::TcpConnectionPtr &conn);
-    void onMessage(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp);
-    void handleWREQ(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
-    void handleWVLDT(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
-    void handleWCMD(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
-    void handleESTABL(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
+    void onRequestStage(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
+    void onAuthenticationStage(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
+    void onCommandStage(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time);
 
     static inline void shutdownSocksReq(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf)
     {
@@ -74,17 +71,12 @@ private:
         buf->retrieveAll();
     }
 
-    enum Status {
-        WREQ, WVLDT, WCMD, ESTABL
-    };
     muduo::net::TcpServer server_;
     muduo::net::EventLoop *loop_;
 
     HashMap<int64_t, TunnelPtr> tunnels_;
-    HashMap<int64_t, Status> status_;
     ConnectionQueue<int64_t> cq_;
     int tunnelPeekCount_;
-    int statusPeekCount_;
 
     muduo::net::InetAddress associationAddr_;
 
