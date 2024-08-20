@@ -459,7 +459,8 @@ public:
                 q_.pop();
                 auto sp = map_.at(key).lock();
                 if (sp && sp->connected()) {
-                    sp->forceClose();
+                    sp->shutdown();
+                    sp->setMessageCallback(muduo::net::defaultMessageCallback);
                     flag = true;
                 }
                 map_.erase(key);

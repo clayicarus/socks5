@@ -5,6 +5,7 @@
 #ifndef PROXY_TUNNEL_H
 #define PROXY_TUNNEL_H
 
+#include <cassert>
 #include <cstddef>
 #include <muduo/base/Logging.h>
 #include <muduo/net/EventLoop.h>
@@ -23,35 +24,44 @@ public:
            size_t high_mark_kb = 1024)
     : loop_(loop), 
       client_(loop, destination, src_conn->name()),
-      serverConn_(src_conn),
+      srcConn_(src_conn),
       highMarkKB_(high_mark_kb)
     {
-        LOG_INFO << "Tunnel-" << this << " " << src_conn->peerAddress().toIpPort()
+        LOG_INFO << "Tunnel[" << client_.name() << "]"
+                 << " " << src_conn->peerAddress().toIpPort()
                  << " <-> " << destination.toIpPort();
     }
     ~Tunnel()
     {
-        LOG_INFO << "~Tunnel-" << this;
+        LOG_INFO << "~Tunnel[" << client_.name() << "]";
+        assert(!srcConn_ || !srcConn_->connected());
+        if (dstConn_ && dstConn_->connected()) {
+            LOG_INFO << "Tunnel[" << client_.name() << "]"
+                     << " actively close dst " << dstConn_->name();
+            dstConn_->shutdown();  // force or shutdown?
+        }
     }
 
     void setup()
     {
         using std::placeholders::_1;
         using std::placeholders::_2;
+
+        // NOTE: it should be weak, because dst may survive (which will invoke cb) even if client_ die
         auto wk = weak_from_this();
         client_.setConnectionCallback([wk](const auto &conn){
             auto sp = wk.lock();
             if(sp) {
-                sp->onClientConnection(conn);
+                sp->onDstConnection(conn);
             }
         });
         client_.setMessageCallback([wk](const auto &conn, auto *buf, auto time){
             auto sp = wk.lock();
             if(sp) {
-                sp->onClientMessage(conn, buf, time);
+                sp->onDstMessage(conn, buf, time);
             }
         });
-        serverConn_->setHighWaterMarkCallback(
+        srcConn_->setHighWaterMarkCallback(
             std::bind(
                 &Tunnel::onHighWaterMarkWeak, 
                 weak_from_this(), 
@@ -71,26 +81,53 @@ public:
     void disconnect()
     {
         // how about not connected yet when source close actively?
+        // it will invoke socksServer::onConnection and erase tunnel, also client_
         client_.disconnect();
     }
 
-private:
-    void teardown() // src or dest close first
+    void onEstablishedSrcMessage(
+        const muduo::net::TcpConnectionPtr &conn,
+        muduo::net::Buffer *buf,
+        muduo::Timestamp time
+    )  // recv from established src conn
     {
-        if(serverConn_) {   // Q3: disconnect source conn actively when dest close first
-            serverConn_->setContext(boost::any());  // Q2 ?
+        LOG_INFO_CONN << "onEstablishedSrcMessage";
+        if (dstConn_ && dstConn_->connected()) {
+            // FIXME: broken pipe here
+            dstConn_->send(buf);
+            assert(!buf->readableBytes());
+        } else {
+            // NOTE: data before establish will be transfered while dst connect
+            LOG_INFO_CONN << "dst not established with buf size " << buf->readableBytes()
+                          << ", stop reading from src";
+            assert(srcConn_->isReading());
+            srcConn_->stopRead();  // wait for dst connection, in case buf explode
+        }
+    } 
+
+private:
+    void teardown()  // dst close actively
+    {
+        LOG_INFO << "Tunnel[" << client_.name() << "]" << " teardown";
+        if (srcConn_) {   // Q3: disconnect source conn actively when dest close first
+            // srcConn_->setContext(boost::any());  // why it's necessary???
             /* forceClose for:
                 1. trigger onConnection to release srcConn immediately then
                 2. ~Tunnel as early as soon and save more fd
                 3. simulate connection close
                 4. it may fix the bug that dst close but src exist
              */
-            serverConn_->forceClose();
+            /* shutdown for:
+                1. dst data transfer completely
+             */
+            LOG_INFO << "Tunnel[" << client_.name() << "]"
+                     << " actively close src " << srcConn_->name();
+            srcConn_->shutdown();
         }
-        clientConn_.reset();    // ~clientConn_ in advance to prevent ~tunnel fail
+        dstConn_.reset();  // tunnel may exist, even dst close actively, because shutdown will not invoke onConnection immediately
     }
 
-    void onClientConnection(const muduo::net::TcpConnectionPtr &conn)   // destination connection
+    void onDstConnection(const muduo::net::TcpConnectionPtr &conn)   // destination connection
     {
         using std::placeholders::_1;
         using std::placeholders::_2;
@@ -101,27 +138,32 @@ private:
             conn->setHighWaterMarkCallback(std::bind(&Tunnel::onHighWaterMarkWeak,
                                                          weak_from_this(), kClient, _1, _2), 
                              highMarkKB_ * K);
-            serverConn_->setContext(conn);  // Q2: record conn to match its client_ ? how about return conn to src 
-            serverConn_->startRead();       // Q1: when destination connected then start read source requests
-            clientConn_ = conn;             // destination conn
-            if(serverConn_->inputBuffer()->readableBytes() > 0) {   // Q1: not yet connected to destination but got requests from source
-                conn->send(serverConn_->inputBuffer()); // send requests from source to destination
+            // srcConn_->setContext(conn);  // why it's necessary??? dst lifetime is longer than src
+            dstConn_ = conn;
+            if (!srcConn_->isReading()) {
+                LOG_INFO << "src start reading";
+                srcConn_->startRead();  // Q1: when destination connected then start read source requests
             }
-            // had_connected_ = true;
+            if(srcConn_->inputBuffer()->readableBytes() > 0) {   // Q1: not yet connected to destination but got requests from source
+                LOG_INFO << "src reserve " << srcConn_->inputBuffer()->readableBytes();
+                conn->send(srcConn_->inputBuffer()); // send requests from source to destination
+            }
         } else {    // Q3: destination disconnected actively
             LOG_INFO_CONN << "destination close";
             teardown(); // disconnect source conn actively
         }
     }
 
-    void onClientMessage(const muduo::net::TcpConnectionPtr &conn,
-                         muduo::net::Buffer *buf,
-                         muduo::Timestamp time)  // received from destination
+    void onDstMessage(
+        const muduo::net::TcpConnectionPtr &conn,
+        muduo::net::Buffer *buf,
+        muduo::Timestamp time
+    )  // receive from destination
     {
         LOG_DEBUG << conn->name() << " " << buf->readableBytes();
-        if(serverConn_) {
+        if(srcConn_) {
             LOG_DEBUG << conn->name() << " - response to source";
-            serverConn_->send(buf); // send response from destination to source
+            srcConn_->send(buf); // send response from destination to source
         } else {    // source died
             // buf->retrieveAll(); // discard all received data
             LOG_FATAL_CONN << "rececive data from destination but source died";
@@ -143,9 +185,9 @@ private:
                  << " onHighWaterMark " << conn->name()
                  << " bytes " << bytesToSent;
         if(which == kServer) {  // source output buffer full
-            if(serverConn_->outputBuffer()->readableBytes() > 0) {  // sent not yet
-                clientConn_->stopRead();    // stop reading response from destination
-                serverConn_->setWriteCompleteCallback(
+            if(srcConn_->outputBuffer()->readableBytes() > 0) {  // sent not yet
+                dstConn_->stopRead();    // stop reading response from destination
+                srcConn_->setWriteCompleteCallback(
                 std::bind(
                     &Tunnel::onWriteCompleteWeak,
                         weak_from_this(),
@@ -156,9 +198,9 @@ private:
             }
             // sent yet
         } else {    // destination output buffer full
-            if(clientConn_->outputBuffer()->readableBytes() > 0) {
-                serverConn_->stopRead();
-                clientConn_->setWriteCompleteCallback(
+            if(dstConn_->outputBuffer()->readableBytes() > 0) {
+                srcConn_->stopRead();
+                dstConn_->setWriteCompleteCallback(
                     std::bind(
                         &Tunnel::onWriteCompleteWeak,
                         weak_from_this(), 
@@ -175,6 +217,8 @@ private:
                                     size_t bytesToSent)  // weak callback for when serverConn close but serverConn exist 
     {
         std::shared_ptr<Tunnel> tunnel = wkTunnel.lock();
+        // src exist but tunnel may not exist, so it will toggle even if tunnel die
+        // tunnel die, dst must be dead
         if(tunnel) {
             tunnel->onHighWaterMark(which, conn, bytesToSent);
         }
@@ -186,17 +230,19 @@ private:
                  << (which == kServer ? "server" : "client")
                  << " onWriteComplete " << conn->name();
         if(which == kServer) {  // sent to destination(server) yet, source output buffer not full
-            clientConn_->startRead();  // start to read from destination
-            serverConn_->setWriteCompleteCallback(muduo::net::WriteCompleteCallback());  // default callback
+            dstConn_->startRead();  // start to read from destination
+            srcConn_->setWriteCompleteCallback(muduo::net::WriteCompleteCallback());  // default callback
         } else {
-            serverConn_->startRead();
-            clientConn_->setWriteCompleteCallback(muduo::net::WriteCompleteCallback());
+            srcConn_->startRead();
+            dstConn_->setWriteCompleteCallback(muduo::net::WriteCompleteCallback());
         }
     }
     static void onWriteCompleteWeak(const std::weak_ptr<Tunnel> &wkTunnel,
                                     ServerClient which,
                                     const muduo::net::TcpConnectionPtr &conn)  // weak callback for what ?
     {
+        // tunnel die, dst must be dead
+        // dst die, src should close, it's not required to startRead
         std::shared_ptr<Tunnel> tunnel = wkTunnel.lock();
         if(tunnel) {
             tunnel->onWriteComplete(which, conn);
@@ -205,8 +251,8 @@ private:
 
     muduo::net::EventLoop *loop_;
     muduo::net::TcpClient client_;
-    muduo::net::TcpConnectionPtr  serverConn_;  // source
-    muduo::net::TcpConnectionPtr clientConn_;   // destination
+    muduo::net::TcpConnectionPtr  srcConn_;  // source
+    muduo::net::TcpConnectionPtr dstConn_;   // destination
     size_t highMarkKB_;
 };
 typedef std::shared_ptr<Tunnel> TunnelPtr;
