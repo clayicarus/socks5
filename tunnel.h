@@ -91,7 +91,7 @@ public:
         assert(conn == srcConn_);
         if (dstConn_ && dstConn_->connected()) {
             LOG_INFO << "Tunnel[" << client_.name() << "] - "
-                     << srcConn_->peerAddress().toIpPort() << " -> " << dstConn_->peerAddress().toIpPort()
+                     << dstConn_->peerAddress().toIpPort() << " <- " << srcConn_->peerAddress().toIpPort()
                      << " " << buf->readableBytes() << " bytes";
             // FIXME: broken pipe here
             dstConn_->send(buf);

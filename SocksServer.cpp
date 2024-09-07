@@ -4,7 +4,6 @@
 
 #include "SocksServer.h"
 #include "base/SocksUtils.h"
-#include "base/ConnectionQueue.h"
 #include "base/ValidateUtils.h"
 #include "base/SocksResponse.h"
 #include "muduo/base/Logging.h"
@@ -14,6 +13,7 @@
 #include "muduo/net/Callbacks.h"
 #include "muduo/net/InetAddress.h"
 #include "muduo/net/TcpConnection.h"
+#include "tunnel.h"
 #include <algorithm>
 #include <cassert>
 #include <functional>
@@ -29,34 +29,34 @@ void SocksServer::onConnection(const muduo::net::TcpConnectionPtr &conn)
     LOG_INFO_CONN << conn->peerAddress().toIpPort() << " -> "
                   << conn->localAddress().toIpPort() << " is "
                   << (conn->connected() ? "UP" : "DOWN");
-    auto key = getNumFromConnName(conn->name());
     if(conn->connected()) {
-        if (cq_.full()) {
-            auto k = cq_.pop();  // shutdown a conn and reset message cb
-            tunnels_.erase(k);
-            LOG_WARN << "too many connections, actively shutdown #" << k
-                     << "; current tunnel count: " << tunnels_.size() << ", peek: " << tunnelPeekCount_;
+        if (conns_.size() == connMaxNum_) {
+            auto it = conns_.begin();
+            it->first->shutdown();
+            it->first->setMessageCallback(muduo::net::defaultMessageCallback);
+            it->first->setConnectionCallback(muduo::net::defaultConnectionCallback);
+            auto name = it->first->name();  // FIXME: copy
+            conns_.erase(it);
+            LOG_WARN << "too many connections, actively shutdown " << it->first->name()
+                     << "; current conn count: " << conns_.size() << ", peek: " << connPeekCount_;
         }
         conn->setTcpNoDelay(true);
-        cq_[key] = std::weak_ptr<muduo::net::TcpConnection>(conn);
+        conns_.emplace(conn, TunnelPtr());
     } else {
         LOG_INFO_CONN << "source close";
-        auto it = tunnels_.find(key);
-        cq_.erase(key);
-        if(it != tunnels_.end()) {
-            LOG_INFO_CONN << "erase tunnel";
-            tunnels_.erase(it);
-        }
         conn->setMessageCallback(muduo::net::defaultMessageCallback);  // because tunnel die, it's not necessary to transfer data or to resolve request
+        auto name = conn->name();
+        auto ret = conns_.erase(conn);
+        assert(ret);
+        LOG_INFO << "erase " << name;
     }
-    tunnelPeekCount_ = std::max(tunnelPeekCount_, static_cast<int>(tunnels_.size()));
-    LOG_INFO_CONN << "current tunnel count: " << tunnels_.size() << ", peek: " << tunnelPeekCount_;
+    connPeekCount_ = std::max(connPeekCount_, static_cast<int>(conns_.size()));
+    LOG_INFO_CONN << "current conn count: " << conns_.size() << ", peek: " << connPeekCount_;
 }
 
 void SocksServer::onRequestStage(const muduo::net::TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time)
 {
     LOG_INFO_CONN << "onRequestStage";
-    auto key = getNumFromConnName(conn->name());
     constexpr size_t headLen = 2;
     if(buf->readableBytes() < headLen) {
         return;
@@ -118,7 +118,6 @@ void SocksServer::onRequestStage(const muduo::net::TcpConnectionPtr &conn, muduo
 void SocksServer::onAuthenticationStage(const TcpConnectionPtr &conn, muduo::net::Buffer *buf, muduo::Timestamp time)
 {
     LOG_INFO_CONN << "onAuthenticationStage";
-    auto key = getNumFromConnName(conn->name());
     if(buf->readableBytes() < 2) {
         return;
     }
@@ -221,7 +220,6 @@ void SocksServer::onCommandStage(const TcpConnectionPtr &conn, muduo::net::Buffe
                     LOG_WARN << hostname << " resolved as " << dst_addr.toIpPort() << " but disconnected already";
                     return;
                 }
-                auto key = getNumFromConnName(conn->name());
                 if (skipLocal_ && isLocalIP(dst_addr)) {
                     LOG_ERROR_CONN << "CONNECT: resolved to local address " << dst_addr.toIpPort();
                     shutdownSocksReq(conn, buf);
@@ -232,7 +230,7 @@ void SocksServer::onCommandStage(const TcpConnectionPtr &conn, muduo::net::Buffe
                 tunnel->setup();
                 conn->setMessageCallback(std::bind(&Tunnel::onEstablishedSrcMessage, tunnel.get(), _1, _2, _3));
                 tunnel->connect();  // no need to invoke onESTABL, it will transfer when dst connect
-                tunnels_[key] = tunnel;  // is necessary
+                conns_[conn] = tunnel;  // is necessary
                 SocksResponse response {};
                 switch (atyp) {
                     case SocksAddressType::IPv4:

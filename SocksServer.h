@@ -6,17 +6,30 @@
 #define SOCKS5_SOCKSSERVER_H
 
 #include <cstddef>
-#include <cstdint>
 #include <functional>
+#include <map>
 #include <muduo/net/TcpServer.h>
-#include "base/SocksResponse.h"
 #include "base/ConnectionQueue.h"
+#include "base/SocksResponse.h"
 #include "muduo/base/Logging.h"
+#include "muduo/net/Callbacks.h"
 #include "muduo/net/InetAddress.h"
 #include "tunnel.h"
 
+struct TcpConnectionPtrComp {
+    bool operator()(
+        const muduo::net::TcpConnectionPtr &a, 
+        const muduo::net::TcpConnectionPtr &b
+    ) const
+    {
+        return getNumFromConnName(a->name()) < getNumFromConnName(b->name());
+    }
+};
+
 class SocksServer : muduo::noncopyable {
 public:
+    using ConnectionMap = std::map<muduo::net::TcpConnectionPtr, TunnelPtr, TcpConnectionPtrComp>;
+    
     SocksServer(muduo::net::EventLoop *loop, 
                 const muduo::net::InetAddress &listenAddr,
                 bool noAuth = false,
@@ -24,13 +37,13 @@ public:
                 const std::string &username = "",  // is this ref valid?
                 const std::string &password = "",  // is this ref valid?
                 bool skipLocal = true,
-                std::size_t connMaxNum = 163,
+                ConnectionMap::size_type connMaxNum = 163,
                 std::size_t highMarkKB = 1024) : 
         server_(loop, listenAddr, "SocksServer"),
         loop_(loop), 
-        tunnels_(connMaxNum),
-        cq_(connMaxNum, connMaxNum * 2),
-        tunnelPeekCount_(0),
+        conns_(),
+        connMaxNum_(connMaxNum),
+        connPeekCount_(0),
         associationAddr_(),
         noAuth_(noAuth),
         useDynamicPassword_(useDynamicPassword),
@@ -74,9 +87,9 @@ private:
     muduo::net::TcpServer server_;
     muduo::net::EventLoop *loop_;
 
-    HashMap<int64_t, TunnelPtr> tunnels_;
-    ConnectionQueue<int64_t> cq_;
-    int tunnelPeekCount_;
+    ConnectionMap conns_;
+    ConnectionMap::size_type connMaxNum_;
+    int connPeekCount_;
 
     muduo::net::InetAddress associationAddr_;
 
