@@ -1,4 +1,4 @@
-#include "muduo/cdns/Resolver.h"
+#include "cdns/Resolver.h"
 #include "SocksUtils.h"
 
 void parseSocksToInetAddress(muduo::net::EventLoop *loop, const void *atyp, SocksAddressParseCallback succeeded_cb, SocksAddressParseFailedCallback failed_cb)

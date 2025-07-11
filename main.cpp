@@ -13,7 +13,7 @@
 #include "EncodeServer.h"
 #include "UdpAssociate.h"
 #include "muduo/base/Logging.h"
-#include "muduo/cdns/Resolver.h"
+#include "cdns/Resolver.h"
 #include "muduo/net/InetAddress.h"
 #include <nlohmann/json.hpp>
 #include <string_view>

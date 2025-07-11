@@ -2,7 +2,7 @@
 #define UDP_ASSOCIATE_H
 
 #include "muduo/base/Logging.h"
-#include "muduo/cdns/Resolver.h"
+#include "cdns/Resolver.h"
 #include "muduo/net/Channel.h"
 #include "muduo/net/EventLoop.h"
 #include "muduo/net/InetAddress.h"
