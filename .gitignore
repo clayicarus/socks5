@@ -1,0 +1,9 @@
+build/
+.cache/
+.vscode/
+.idea/
+.DS_Store
+.clangd/
+.cursorrules
+.cursor/
+.cursor/
